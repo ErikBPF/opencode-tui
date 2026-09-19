@@ -54,11 +54,14 @@ features:
     done
     [[ $fail -eq 0 ]] && echo "features OK: ${#files[@]} file(s)"
 
-# Binding for features/attach-and-prompt.feature. Unautomated contract until
-# the cucumber-rs steps exist; this asserts the contract is present and
-# well-formed so it cannot be silently dropped.
+# Binding for features/attach-and-prompt.feature: the offline scenarios run
+# through cucumber-rs against a pinned `opencode serve`.
 contracts: features
-    bash tests/contract.sh
+    cargo test --test contract
+
+# The @live scenarios additionally need a reachable model provider.
+contracts-live: features
+    OPENCODE_TUI_CONTRACT_LIVE=1 cargo test --test contract
 
 ci: format-check lint test features contracts
     @echo "CI GREEN (fmt + clippy + tests + features + contracts)"

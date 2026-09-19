@@ -14,20 +14,22 @@ First milestone (M1) tracer bullet: **attach + read + prompt**.
       tree (see [Fidelity](#fidelity) for what M1 ports and what it defers).
 - [x] Connect to a server, load the session list, hold `/global/event`,
       render the home screen.
-- [ ] Session transcript with part renderers.
-- [ ] Prompt submission.
-- [ ] Permission requests rendered read-only.
+- [x] Session transcript with part renderers.
+- [x] Prompt submission.
+- [x] Permission requests rendered read-only.
 
 The behavior contract is
-[`features/attach-and-prompt.feature`](features/attach-and-prompt.feature). Its
-scenarios are an **unautomated contract** until bound to cucumber-rs steps and
-observed failing against the skeleton.
+[`features/attach-and-prompt.feature`](features/attach-and-prompt.feature). The
+seven offline scenarios run through cucumber-rs against a pinned
+`opencode serve` (`just contracts`). The prompt reply needs a model provider, so
+that scenario is tagged `@live` and runs only under `just contracts-live`.
 
 ## Usage
 
 ```sh
 opencode serve --port 4096          # in one shell
 just run                            # or: cargo run -- --url http://127.0.0.1:4096 --dir /some/project
+cargo run -- --url http://127.0.0.1:4096 --check   # headless readiness probe
 ```
 
 `OPENCODE_URL` and `OPENCODE_DIRECTORY` provide the defaults. The directory

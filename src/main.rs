@@ -1,15 +1,6 @@
-mod app;
-mod component;
-mod config;
-mod context;
-mod keymap;
-mod routes;
-mod runtime;
-mod theme;
-mod ui;
-mod util;
-
 use std::process::ExitCode;
+
+use opencode_tui::{app, runtime};
 
 #[tokio::main]
 async fn main() -> ExitCode {

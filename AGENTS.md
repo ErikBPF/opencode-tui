@@ -59,9 +59,10 @@ Report evidence (command + result).
 
 Every behavior change lands with a `.feature` beside the code it validates and a
 binding that fails without the change. Scenarios state observable outcomes
-(screens, statuses, messages), never implementation detail. A `.feature` with no
-bound steps is marked as an unautomated contract in its header and its binding
-must not pretend otherwise.
+(screens, statuses, messages), never implementation detail. `just contracts`
+runs the offline scenarios through cucumber-rs against a pinned `opencode serve`;
+a scenario that needs a live model provider is tagged `@live` and runs only under
+`just contracts-live`. Never claim a scenario passed unless its binding ran.
 
 ## Repository conventions
 

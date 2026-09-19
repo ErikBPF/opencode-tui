@@ -20,3 +20,11 @@ serde_json = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+cucumber = "0.22"
+
+# The contract binding runs Cucumber itself, so libtest must not wrap it.
+[[test]]
+name = "contract"
+harness = false

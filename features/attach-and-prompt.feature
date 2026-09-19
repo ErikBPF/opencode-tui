@@ -1,9 +1,10 @@
 # Behavior contract for the first milestone: attach to a running opencode
 # server and hold a prompt session.
 #
-# These scenarios are an UNAUTOMATED CONTRACT until the cucumber-rs bindings in
-# tests/ run against a pinned `opencode serve` and have been observed failing
-# against the unmodified skeleton. `just contracts` runs the binding.
+# These scenarios run through the cucumber-rs bindings in tests/ against a
+# pinned `opencode serve`. `just contracts` runs the offline set; the @live
+# scenarios additionally need a reachable model provider and run via
+# `just contracts-live`.
 @contract
 Feature: Attach to an opencode server and interact with a session
 
@@ -37,12 +38,13 @@ Feature: Attach to an opencode server and interact with a session
     And each entry shows the session title, or its identifier when untitled
 
   Scenario: Opening a session renders its transcript
-    Given a session exists with at least one user and one assistant message
+    Given a session exists with a recorded transcript
     When the user opens that session
     Then the session screen lists the messages in server order
     And assistant parts are rendered by their part type
     And tool parts show the tool name and its current status
 
+  @live
   Scenario: Submitting a prompt streams the assistant reply
     Given the user is on an open session
     When the user submits the prompt "reply with the single word pong"

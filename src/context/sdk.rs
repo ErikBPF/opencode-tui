@@ -257,6 +257,19 @@ impl OpencodeClient {
         redact_url(&self.base_url)
     }
 
+    /// Build a request without sending it. Exposed for the contract binding,
+    /// which asserts how the directory scope is attached.
+    pub fn request_for_test(
+        &self,
+        method: Method,
+        path: &str,
+        accept: &str,
+    ) -> Result<reqwest::Request> {
+        self.request(method, path, accept)
+            .build()
+            .context("build request")
+    }
+
     fn request(&self, method: Method, path: &str, accept: &str) -> reqwest::RequestBuilder {
         let is_read = matches!(method, Method::GET | Method::HEAD);
         let mut url = format!("{}{}", self.base_url, path);
@@ -293,6 +306,21 @@ impl OpencodeClient {
         serde_json::from_str(&body).context("decode session list")
     }
 
+    /// Probe whether the server answers yet, with a short per-attempt timeout.
+    ///
+    /// `GET /session` can take tens of seconds on a server that has bound its
+    /// socket but not finished warming up, and a single long timeout would burn
+    /// the caller's whole readiness budget. Callers retry until their own
+    /// deadline; this method stays quick so retries are cheap.
+    pub async fn ready(&self) -> Result<()> {
+        self.request(Method::GET, "/session", "application/json")
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+            .with_context(|| format!("GET {}/session", self.display_url()))?;
+        Ok(())
+    }
+
     /// List a session's messages with their parts (v1 `GET /session/{id}/message`).
     pub async fn list_messages(&self, session_id: &str) -> Result<Vec<MessageWithParts>> {
         let path = format!("/session/{session_id}/message");
@@ -308,6 +336,23 @@ impl OpencodeClient {
             bail!("GET {path} -> {status}: {body}");
         }
         serde_json::from_str(&body).context("decode transcript")
+    }
+
+    /// Create a session (v1 `POST /session`), returning the new session.
+    pub async fn create_session(&self) -> Result<Session> {
+        let response = self
+            .request(Method::POST, "/session", "application/json")
+            .json(&serde_json::json!({}))
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .with_context(|| format!("POST {}", self.display_url()))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("POST /session -> {status}: {body}");
+        }
+        serde_json::from_str(&body).context("decode created session")
     }
 
     /// Send a text prompt to a session (v1 `POST /session/{id}/message`). The

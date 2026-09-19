@@ -36,6 +36,13 @@ pub async fn run(args: Args) -> Result<()> {
         .map(crate::util::abbreviate_home)
         .unwrap_or_else(|| client.display_url());
 
+    // Headless readiness probe: report the connection and exit before any
+    // terminal setup, so scripts and the behavior contract can assert it.
+    if args.check {
+        println!("opencode-tui: connected to {}", client.display_url());
+        return Ok(());
+    }
+
     // Bounded so a burst of events from a hostile or buggy server applies
     // backpressure instead of growing the queue without limit.
     let (sender, mut receiver) = mpsc::channel(1024);

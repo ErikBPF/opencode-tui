@@ -1,14 +1,16 @@
 use anyhow::{anyhow, bail, Result};
 
 const DEFAULT_URL: &str = "http://127.0.0.1:4096";
-const HELP: &str = "opencode-tui --url <base-url> [--dir <path>]";
+const HELP: &str = "opencode-tui --url <base-url> [--dir <path>] [--check]";
 
 /// Parsed CLI arguments. Mirrors the upstream `context/args` surface for the
-/// options M1 supports: the server URL and the working-directory header.
+/// options M1 supports: the server URL, the working-directory header, and a
+/// headless readiness probe for scripts and the behavior contract.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Args {
     pub url: String,
     pub directory: Option<String>,
+    pub check: bool,
 }
 
 impl Args {
@@ -34,6 +36,7 @@ impl Args {
     ) -> Result<Self> {
         let mut url = url_env.unwrap_or_else(|| DEFAULT_URL.to_string());
         let mut directory = directory_env;
+        let mut check = false;
 
         let mut argv = argv.into_iter();
         while let Some(arg) = argv.next() {
@@ -42,12 +45,17 @@ impl Args {
                 "--dir" | "--directory" => {
                     directory = Some(argv.next().ok_or_else(|| anyhow!("--dir needs a value"))?)
                 }
+                "--check" => check = true,
                 "-h" | "--help" => unreachable!("help is handled before parse"),
                 other => bail!("unknown argument: {other}"),
             }
         }
 
-        Ok(Self { url, directory })
+        Ok(Self {
+            url,
+            directory,
+            check,
+        })
     }
 }
 
@@ -70,8 +78,14 @@ mod tests {
             Args {
                 url: DEFAULT_URL.to_string(),
                 directory: None,
+                check: false,
             }
         );
+    }
+
+    #[test]
+    fn check_flag_is_opt_in() {
+        assert!(parse(&["--check"], None, None).unwrap().check);
     }
 
     #[test]
