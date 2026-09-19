@@ -209,12 +209,14 @@ stub-server reconnect test, `Args` unit tests, and the cucumber binding.
 
 ## Next
 
-`/ip` slices: **S1 and S2 are implemented**: `Args` is parsed by a pure
+`/ip` slices: **S1, S2 and S3 are implemented**: `Args` is parsed by a pure
 `parse(argv, url_env, dir_env)` with five unit tests; the live test is
-opt-in via `just live`; and `app::spawn_event_stream` is exercised by a stub
+opt-in via `just live`; `app::spawn_event_stream` is exercised by a stub
 TCP/SSE server test that closes the stream and observes the second
-`server.connected` after the 1s backoff (20 tests, 19 passing + 1 ignored).
-Remaining: S3 transcript, S4 prompt, S5 read-only permission, S6 CLI/config
+`server.connected` after the 1s backoff; and S3 installs the transcript from
+`GET /session/{id}/message` and folds `message.updated` /
+`message.part.updated` into the open session (21 tests, 20 passing + 1 ignored).
+Remaining: S4 prompt, S5 read-only permission, S6 CLI/config
 polish, S7 cucumber binding. Frontier Q1–Q4 remain open with defaults in use:
 devenv + justfile only; single crate; no permission answering in M1; GitHub
 Actions CI.

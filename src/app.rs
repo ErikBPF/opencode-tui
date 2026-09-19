@@ -38,7 +38,7 @@ pub async fn run(args: Args) -> Result<()> {
     // Bounded so a burst of events from a hostile or buggy server applies
     // backpressure instead of growing the queue without limit.
     let (sender, mut receiver) = mpsc::channel(1024);
-    spawn_event_stream(client, sender);
+    spawn_event_stream(client.clone(), sender);
 
     let mut store = Store::default();
     store.loaded(sessions);
@@ -47,18 +47,30 @@ pub async fn run(args: Args) -> Result<()> {
     let theme = Theme::default();
 
     let mut terminal = ratatui::init();
+    let view = View {
+        client: &client,
+        theme: &theme,
+        location: &location,
+    };
     let outcome = draw_loop(
         &mut terminal,
         &mut receiver,
         &mut store,
         &mut route,
         selected,
-        &theme,
-        &location,
+        &view,
     )
     .await;
     ratatui::restore();
     outcome
+}
+
+/// Read-only view state shared by the draw loop: the client plus the footer
+/// values. Bundled so the loop stays under the argument-count lint.
+struct View<'a> {
+    client: &'a OpencodeClient,
+    theme: &'a Theme,
+    location: &'a str,
 }
 
 /// Subscribe to `/global/event` and forward decoded envelopes, reconnecting
@@ -99,11 +111,10 @@ async fn draw_loop(
     store: &mut Store,
     route: &mut Route,
     selected: usize,
-    theme: &Theme,
-    location: &str,
+    view: &View<'_>,
 ) -> Result<()> {
     loop {
-        terminal.draw(|frame| draw(frame, store, route, selected, theme, location))?;
+        terminal.draw(|frame| draw(frame, store, route, selected, view))?;
 
         while let Ok(message) = receiver.try_recv() {
             match message {
@@ -117,8 +128,14 @@ async fn draw_loop(
                 match keymap::command_for(key) {
                     Some(Command::Quit) => return Ok(()),
                     Some(Command::OpenSession) => {
-                        if let Some(session) = store.sessions.get(selected) {
-                            *route = Route::Session(session.id.clone());
+                        if let Some(session) = store.sessions.get(selected).cloned() {
+                            match view.client.list_messages(&session.id).await {
+                                Ok(messages) => {
+                                    store.open_session(session.id.clone(), messages);
+                                    *route = Route::Session(session.id);
+                                }
+                                Err(err) => tracing::warn!(%err, "failed to load transcript"),
+                            }
                         }
                     }
                     Some(Command::Back) | None => *route = Route::Home,
@@ -128,14 +145,7 @@ async fn draw_loop(
     }
 }
 
-fn draw(
-    frame: &mut Frame,
-    store: &Store,
-    route: &Route,
-    selected: usize,
-    theme: &Theme,
-    location: &str,
-) {
+fn draw(frame: &mut Frame, store: &Store, route: &Route, selected: usize, view: &View<'_>) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -145,11 +155,14 @@ fn draw(
         Route::Home => crate::routes::home::render(frame, chunks[0], store, selected),
         Route::Session(id) => {
             let session = store.sessions.iter().find(|session| &session.id == id);
-            crate::routes::session::render(frame, chunks[0], session);
+            crate::routes::session::render(frame, chunks[0], session, &store.messages);
         }
     }
 
-    let status = format!(" {} | {} | {:?} ", theme.name, location, store.status);
+    let status = format!(
+        " {} | {} | {:?} ",
+        view.theme.name, view.location, store.status
+    );
     frame.render_widget(
         Paragraph::new(status).block(Block::default().borders(Borders::TOP)),
         chunks[1],

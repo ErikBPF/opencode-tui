@@ -64,6 +64,135 @@ pub struct Session {
     pub title: Option<String>,
 }
 
+/// A message with its ordered parts, as returned by `GET /session/{id}/message`.
+/// Mirrors the upstream `{ info, parts }` pair.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct MessageWithParts {
+    pub info: Message,
+    #[serde(default)]
+    pub parts: Vec<PartEntry>,
+}
+
+/// Message identity and role. M1 does not render token or timing fields.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Message {
+    pub id: String,
+    #[serde(rename = "sessionID")]
+    pub session_id: String,
+    pub role: String,
+}
+
+/// A part plus the identity needed to upsert it from `message.part.updated`.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct PartEntry {
+    pub id: String,
+    #[serde(rename = "messageID")]
+    pub message_id: String,
+    #[serde(flatten)]
+    pub part: Part,
+}
+
+/// The upstream `Part` union. Unknown variants decode to `Unknown` so a server
+/// version with new part types does not break the transcript.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum Part {
+    Text {
+        #[serde(default)]
+        text: String,
+    },
+    Reasoning {
+        #[serde(default)]
+        text: String,
+    },
+    Tool {
+        #[serde(default)]
+        tool: String,
+        #[serde(default)]
+        state: ToolState,
+    },
+    File {
+        #[serde(default)]
+        filename: Option<String>,
+        #[serde(default)]
+        mime: String,
+    },
+    Agent {
+        #[serde(default)]
+        name: String,
+    },
+    Subtask {
+        #[serde(default)]
+        description: String,
+        #[serde(default)]
+        agent: String,
+    },
+    StepStart,
+    StepFinish {
+        #[serde(default)]
+        reason: String,
+    },
+    Snapshot,
+    Patch {
+        #[serde(default)]
+        files: Vec<String>,
+    },
+    Retry {
+        #[serde(default)]
+        attempt: u32,
+    },
+    Compaction,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Tool execution state. M1 shows the status and any title/error/output.
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+pub struct ToolState {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub output: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Part {
+    /// One-line summary for the transcript, mirroring the upstream tool-display
+    /// intent without its renderer.
+    pub fn display(&self) -> String {
+        match self {
+            Part::Text { text } => text.clone(),
+            Part::Reasoning { text } => format!("[reasoning] {text}"),
+            Part::Tool { tool, state } => {
+                let detail = state
+                    .title
+                    .as_deref()
+                    .or(state.error.as_deref())
+                    .or(state.output.as_deref())
+                    .unwrap_or("");
+                format!("[tool {tool} {}] {detail}", state.status)
+                    .trim_end()
+                    .to_string()
+            }
+            Part::File { filename, mime } => {
+                format!("[file {}]", filename.as_deref().unwrap_or(mime))
+            }
+            Part::Agent { name } => format!("[agent {name}]"),
+            Part::Subtask { description, agent } => format!("[subtask {agent}] {description}"),
+            Part::StepStart => "[step]".to_string(),
+            Part::StepFinish { reason } => format!("[step done: {reason}]"),
+            Part::Snapshot => "[snapshot]".to_string(),
+            Part::Patch { files } => format!("[patch {}]", files.join(", ")),
+            Part::Retry { attempt } => format!("[retry #{attempt}]"),
+            Part::Compaction => "[compaction]".to_string(),
+            Part::Unknown => "[unknown part]".to_string(),
+        }
+    }
+}
+
 /// HTTP client for one opencode server. Mirrors upstream `context/sdk.tsx`:
 /// the base URL, the directory scope (a `directory` query param on GET/HEAD and
 /// the URL-encoded `x-opencode-directory` header on writes, as the SDK does),
@@ -128,6 +257,23 @@ impl OpencodeClient {
             bail!("GET /session -> {status}: {body}");
         }
         serde_json::from_str(&body).context("decode session list")
+    }
+
+    /// List a session's messages with their parts (v1 `GET /session/{id}/message`).
+    pub async fn list_messages(&self, session_id: &str) -> Result<Vec<MessageWithParts>> {
+        let path = format!("/session/{session_id}/message");
+        let response = self
+            .request(Method::GET, &path, "application/json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .with_context(|| format!("GET {}", self.display_url()))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("GET {path} -> {status}: {body}");
+        }
+        serde_json::from_str(&body).context("decode transcript")
     }
 
     /// Subscribe to the server's global event stream. Mirrors the upstream
