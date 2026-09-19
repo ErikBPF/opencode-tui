@@ -43,6 +43,15 @@ impl Store {
                     self.upsert(session);
                 }
             }
+            Event::SessionDeleted { properties } => {
+                if let Some(id) = properties
+                    .get("info")
+                    .and_then(|info| info.get("id"))
+                    .and_then(|id| id.as_str())
+                {
+                    self.sessions.retain(|session| session.id != id);
+                }
+            }
             _ => {}
         }
     }
@@ -56,5 +65,55 @@ impl Store {
             Some(existing) => *existing = session,
             None => self.sessions.push(session),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope(json: &str) -> Envelope {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn connect_marks_the_store_complete() {
+        let mut store = Store::default();
+        assert_eq!(store.status, Status::Loading);
+        store.apply(&envelope(
+            r#"{"payload":{"type":"server.connected"},"directory":"/d"}"#,
+        ));
+        assert_eq!(store.status, Status::Complete);
+    }
+
+    #[test]
+    fn session_updates_upsert_and_session_deletes_prune() {
+        let mut store = Store::default();
+        store.apply(&envelope(
+            r#"{"payload":{"type":"session.updated","properties":{"info":{"id":"s1","title":"One"}}},"directory":"/d"}"#,
+        ));
+        store.apply(&envelope(
+            r#"{"payload":{"type":"session.updated","properties":{"info":{"id":"s1","title":"One (renamed)"}}},"directory":"/d"}"#,
+        ));
+        assert_eq!(store.sessions.len(), 1);
+        assert_eq!(store.sessions[0].title.as_deref(), Some("One (renamed)"));
+
+        store.apply(&envelope(
+            r#"{"payload":{"type":"session.deleted","properties":{"info":{"id":"s1"}}},"directory":"/d"}"#,
+        ));
+        assert!(store.sessions.is_empty());
+    }
+
+    #[test]
+    fn degraded_does_not_overwrite_a_pending_initial_load() {
+        let mut store = Store::default();
+        store.degraded();
+        assert_eq!(store.status, Status::Loading);
+
+        store.apply(&envelope(
+            r#"{"payload":{"type":"server.connected"},"directory":"/d"}"#,
+        ));
+        store.degraded();
+        assert_eq!(store.status, Status::Partial);
     }
 }

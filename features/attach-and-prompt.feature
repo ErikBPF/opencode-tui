@@ -34,7 +34,7 @@ Feature: Attach to an opencode server and interact with a session
     Given the server has at least one session
     When the client finishes its initial load
     Then the home screen lists the server's sessions
-    And each entry shows the session title and identifier
+    And each entry shows the session title, or its identifier when untitled
 
   Scenario: Opening a session renders its transcript
     Given a session exists with at least one user and one assistant message
@@ -65,7 +65,7 @@ Feature: Attach to an opencode server and interact with a session
     Then the event stream is re-subscribed
     And the state status returns to Complete
 
-  Scenario: The directory header is carried and encoded
+  Scenario: The directory scope is carried and encoded
     Given the user passes a working directory that contains spaces
     When the client requests server state
     Then the directory is sent to the server

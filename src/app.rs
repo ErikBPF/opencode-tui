@@ -27,15 +27,17 @@ pub async fn run(args: Args) -> Result<()> {
     let sessions = client
         .list_sessions()
         .await
-        .map_err(|err| anyhow::anyhow!("cannot reach server at {}: {err}", args.url))?;
+        .map_err(|err| anyhow::anyhow!("cannot reach server at {}: {err}", client.display_url()))?;
 
     let location = args
         .directory
         .as_deref()
         .map(crate::util::abbreviate_home)
-        .unwrap_or_else(|| client.base_url().to_string());
+        .unwrap_or_else(|| client.display_url());
 
-    let (sender, mut receiver) = mpsc::unbounded_channel();
+    // Bounded so a burst of events from a hostile or buggy server applies
+    // backpressure instead of growing the queue without limit.
+    let (sender, mut receiver) = mpsc::channel(1024);
     spawn_event_stream(client, sender);
 
     let mut store = Store::default();
@@ -61,38 +63,39 @@ pub async fn run(args: Args) -> Result<()> {
 
 /// Subscribe to `/global/event` and forward decoded envelopes, reconnecting
 /// with bounded exponential backoff until the channel closes. Mirrors the
-/// upstream retry loop (1s..30s).
-fn spawn_event_stream(client: OpencodeClient, sender: mpsc::UnboundedSender<Result<Envelope>>) {
+/// upstream retry loop (1s..30s): the attempt count is never reset on connect,
+/// so a server that accepts and immediately drops still backs off.
+fn spawn_event_stream(client: OpencodeClient, sender: mpsc::Sender<Result<Envelope>>) {
     tokio::spawn(async move {
         let mut attempt: u32 = 0;
         loop {
             match client.event_stream().await {
                 Ok(mut stream) => {
-                    attempt = 0;
                     while let Some(item) = stream.next().await {
-                        if sender.send(item).is_err() {
+                        if sender.send(item).await.is_err() {
                             return;
                         }
                     }
-                    let _ = sender.send(Err(anyhow::anyhow!("event stream ended")));
+                    let _ = sender
+                        .send(Err(anyhow::anyhow!("event stream ended")))
+                        .await;
                 }
                 Err(err) => {
-                    if sender.send(Err(err)).is_err() {
+                    if sender.send(Err(err)).await.is_err() {
                         return;
                     }
                 }
             }
 
             attempt += 1;
-            let delay = Duration::from_millis((1000u64 << (attempt - 1).min(5)).min(30_000));
-            tokio::time::sleep(delay).await;
+            tokio::time::sleep(crate::context::event::backoff(attempt)).await;
         }
     });
 }
 
 async fn draw_loop(
     terminal: &mut ratatui::DefaultTerminal,
-    receiver: &mut mpsc::UnboundedReceiver<Result<Envelope>>,
+    receiver: &mut mpsc::Receiver<Result<Envelope>>,
     store: &mut Store,
     route: &mut Route,
     selected: usize,
@@ -118,8 +121,7 @@ async fn draw_loop(
                             *route = Route::Session(session.id.clone());
                         }
                     }
-                    Some(Command::Back) => *route = Route::Home,
-                    Some(Command::Refresh) | None => {}
+                    Some(Command::Back) | None => *route = Route::Home,
                 }
             }
         }

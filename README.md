@@ -30,9 +30,10 @@ opencode serve --port 4096          # in one shell
 just run                            # or: cargo run -- --url http://127.0.0.1:4096 --dir /some/project
 ```
 
-`OPENCODE_URL` and `OPENCODE_DIRECTORY` provide the defaults. `--dir` is sent
-to the server as the URL-encoded `x-opencode-directory` header, matching the
-upstream SDK.
+`OPENCODE_URL` and `OPENCODE_DIRECTORY` provide the defaults. The directory
+scope is sent as an URL-encoded `directory` query parameter on reads and as the
+`x-opencode-directory` header on writes, matching the upstream SDK. Credentials
+in `--url` userinfo are redacted from errors and the status line.
 
 ## Development
 
@@ -58,7 +59,7 @@ counterparts:
 
 | This crate | Upstream `packages/tui/src` |
 |---|---|
-| `context/sdk.rs` | `context/sdk.tsx` — client, `x-opencode-directory`, SSE |
+| `context/sdk.rs` | `context/sdk.tsx` — client, directory scope, SSE |
 | `context/event.rs` | `context/event.ts` — typed event dispatch |
 | `context/sync.rs` | `context/sync.tsx` — `loading\|partial\|complete` store |
 | `context/route.rs` | `context/route.tsx` |

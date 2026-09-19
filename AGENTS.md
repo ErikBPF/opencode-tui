@@ -36,8 +36,9 @@ trees. Keep that mapping; do not invent a new layout.
 ## Non-negotiables
 
 - The client never spawns or supervises a server. It attaches to a URL.
-- `x-opencode-directory` is URL-encoded and only sent when a directory is set,
-  exactly as the upstream SDK does.
+- The directory scope is URL-encoded and only sent when a directory is set, as a
+  `directory` query param on GET/HEAD and the `x-opencode-directory` header on
+  writes, exactly as the upstream SDK does.
 - An event type the decoder does not know must not kill the stream; decode it to
   `Unknown`.
 - The event stream dropping flips status to `Partial` and retries with bounded

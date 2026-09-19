@@ -52,16 +52,18 @@ owner/deps → rollout/rollback.
 - **Scenario:** "Connecting makes the client ready", "An unreachable server is
   reported, not hidden".
 - **RED:** `runtime::Args` unit tests (default URL, `--url`, `--dir`,
-  `OPENCODE_DIRECTORY`, unknown arg); `sdk` unit test asserting the
-  `x-opencode-directory` header is URL-encoded and absent when no directory;
-  live integration test that is `#[ignore]` unless `OPENCODE_TUI_LIVE_URL` is set.
-  Command: `just test`. Expected failure: arguments currently parse but are not
-  asserted, and the header/`Args` behavior has no test.
+  `OPENCODE_DIRECTORY`, unknown arg); the directory-scope tests in `sdk.rs`
+  (query param on GET, encoded header on writes, absent when unset); a live
+  integration test that is `#[ignore]` unless `OPENCODE_TUI_LIVE_URL` is set.
+  Command: `just test`. Expected failure: argument parsing is unasserted.
+  (The `sdk.rs` directory tests landed in the RV revision and pass; the `Args`
+  and live tests are still owed.)
 - **GREEN:** already-shipped `Args`, `OpencodeClient::new`,
   `OpencodeClient::list_sessions`, `Store::loaded`, `routes::home::render`.
   Add the tests only; no new behavior.
-- **Checks:** `just ci`; `cargo run -- --url http://127.0.0.1:59999` exits 1 and
-  prints the URL (verified once already; keep it a scripted check).
+- **Checks:** `just ci`; the documented unreachable-server command
+  `cargo run -- --url http://127.0.0.1:59999` exits 1 and prints the URL
+  (verified once in the RV revision).
 - **Deps:** none. **Rollback:** revert the test files.
 
 ### S2 — Event stream degrades and recovers
@@ -71,15 +73,15 @@ owner/deps → rollout/rollback.
   with 1s..30s backoff and returns to `Complete` on reconnect.
 - **Scenario:** "A dropped event stream degrades and recovers".
 - **RED:** `event` unit tests decoding fixture envelopes (payload wrapper,
-  `sync` dropped, unknown type → `Unknown`); `backoff(attempt)` unit tests
+  `sync` frames, unknown type → `Unknown`); `backoff(attempt)` unit tests
   asserting 1, 2, 4 … 30 s and the cap; `sync` unit tests for
-  `ServerConnected`/`SessionUpdated`/`degraded`. Command: `just test`.
-  Expected failure: `backoff` is not yet a function; decode/reducer assertions
-  do not exist.
-- **GREEN:** extract `event::backoff(attempt) -> Duration` from the loop in
-  `app.rs`; extract `event::decode(&str) -> Option<Envelope>` so the SSE
-  `filter_map` is testable; keep `sync::apply`. No behavior change beyond
-  testability.
+  `ServerConnected`/`SessionUpdated`/`SessionDeleted`/`degraded`. Command:
+  `just test`. Expected failure: the stub-server round-trip test does not exist.
+  (The `event`/`sync`/`backoff` unit tests landed in the RV revision and pass.)
+- **GREEN:** `event::backoff(attempt) -> Duration` landed in the RV revision,
+  the SSE decode is now traced instead of silently dropped, `sync::apply` handles
+  `session.deleted`, and the queue is bounded (1024). Remaining: the stub-server
+  reconnect test.
 - **Checks:** `just ci`; stub-server integration test that closes the stream and
   asserts a second `server.connected` is observed within the backoff bound.
 - **Deps:** S1. **Rollback:** revert to the inline loop.
@@ -107,11 +109,11 @@ owner/deps → rollout/rollback.
 - **Observable:** on an open session, submitting `"reply with the single word
   pong"` posts to that session and the reply appears without a manual refresh.
 - **Scenario:** "Submitting a prompt streams the assistant reply".
-- **RED:** `sdk` unit test for the `POST /session/{id}/prompt` body shape
-  (`{"parts":[{"type":"text","text":...}]}`) and non-2xx mapping; a
-  `context::prompt` unit test for input editing; a reducer test that an
-  optimistic user part and the streamed assistant part both land once.
-  Command: `just test`. Expected failure: there is no prompt type or POST.
+- **RED:** `sdk` unit test for the `POST /session/{id}/message` body shape
+  (`{"parts":[{"type":"text","text":...}]}`, the v1 prompt operation) and
+  non-2xx mapping; a `context::prompt` unit test for input editing; a reducer
+  test that an optimistic user part and the streamed assistant part both land
+  once. Command: `just test`. Expected failure: there is no prompt type or POST.
 - **GREEN:** add `context/prompt.rs` (mirrors upstream `context/prompt.tsx`),
   `component/prompt.rs` (input line), `sdk::prompt(session_id, text)`; wire the
   session screen and keymap (`Enter` submits, `Esc` returns).
@@ -134,11 +136,11 @@ owner/deps → rollout/rollback.
   session continues.
 - **Deps:** S3. **Rollback:** remove the banner; the store field is additive.
 
-### S6 — Directory header and CLI/config polish
+### S6 — Directory scope and CLI/config polish
 
 - **Observable:** `--dir "/a path/with spaces"` reaches the server; the footer
   shows the abbreviated path; `-h` prints usage.
-- **Scenario:** "The directory header is carried and encoded".
+- **Scenario:** "The directory scope is carried and encoded".
 - **RED:** unit tests already added in S1 cover encoding; add a `util` test for
   `abbreviate_home`. Command: `just test`.
 - **GREEN:** already shipped; tests close the gap. Optional: read
@@ -182,16 +184,31 @@ Two bounded rounds, applied.
 - **R1 — "Prompt fidelity is the easiest thing to fake."** A reply read from the
   POST response would pass a naive test but break streaming. Resolution: S4's
   check requires the reply to arrive via the event stream.
-- **R2 — "Terminal restore on panic."** `ratatui::restore()` runs on the `Err`
-  path, but a panic unwinds past it. Resolution: S1 adds a scripted
-  unreachable-server check; a panic hook is deferred unless a real case appears.
+- **R2 — "Terminal restore on panic."** ~~A panic unwinds past
+  `ratatui::restore()`.~~ Corrected in the RV revision: `ratatui::init()` already
+  installs a panic hook that restores the terminal, and the `Err` path calls
+  `restore()` explicitly, so no extra hook is needed.
 - **R2 — "Permission answering is a hidden dependency."** If the server blocks a
   tool until permission is answered, an unanswered request stalls the session.
   Resolution: confirm during S5 with a live tool call; if it blocks, an
   auto-deny-by-default option becomes a new `/pl` question, not a silent feature.
 
+## RV revision (2026-09-19)
+
+The scaffold was reviewed by independent correctness/conformance and
+security/reliability passes. Applied: directory scope moved to a `directory`
+query param on GET/HEAD and the encoded header only on writes (matching the SDK);
+the v1 prompt endpoint corrected to `POST /session/{id}/message`; `Esc` returns
+instead of quitting; backoff no longer resets on connect; the event queue is
+bounded; `session.deleted` prunes the store; connect timeout, redirect refusal
+and URL-userinfo redaction added; decode failures are traced; unused
+`thiserror`/`crossterm event-stream`/`tokio full` removed and TLS switched to
+native roots. Unit seams for args, directory scope, backoff, decode, reducers and
+path abbreviation landed with the fixes. Deferred (recorded, not fixed): a
+stub-server reconnect test, `Args` unit tests, and the cucumber binding.
+
 ## Next
 
-`/rv` on this plan and the scaffold. Frontier Q1–Q4 remain open with defaults in
-use: devenv + justfile only; single crate; no permission answering in M1;
-GitHub Actions CI.
+`/ip` slices S1–S7 remain; the RV revision closed the S1/S2 pure seams. Frontier
+Q1–Q4 remain open with defaults in use: devenv + justfile only; single crate; no
+permission answering in M1; GitHub Actions CI.
