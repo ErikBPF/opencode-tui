@@ -22,6 +22,7 @@ as read-only truth for interfaces, never as build input.
 | Active route | `src/context/route.rs` |
 | Theme identity | `src/context/theme.rs`, `src/theme/` |
 | Keybindings | `src/config/keybind.rs`, `src/keymap.rs` |
+| TUI config loading | `src/config/mod.rs` |
 | Screen | `src/routes/<screen>.rs` |
 | Reusable widget | `src/component/`, `src/ui/` |
 | CLI arguments | `src/runtime.rs` |

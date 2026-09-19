@@ -72,3 +72,12 @@ Feature: Attach to an opencode server and interact with a session
     When the client requests server state
     Then the directory is sent to the server
     And the value is URL-encoded
+
+  Scenario: Keybindings can be overridden from tui.json
+    Given the user configures an exit binding of "ctrl+d,q"
+    When the keybinding configuration is resolved
+    Then "ctrl+d" and "q" both exit the client
+    And the default "ctrl+c" exit binding is replaced
+    Given the user disables the back binding with "none"
+    Then escape no longer returns to the home screen
+    And an unrecognized keybind name is reported and ignored

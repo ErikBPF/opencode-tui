@@ -13,6 +13,7 @@ mod steps {
     use cucumber::{given, then, when};
     use futures::StreamExt;
 
+    use crate::key_event;
     use crate::Harness;
 
     #[given(expr = "an opencode server is listening at a known base URL")]
@@ -429,6 +430,71 @@ mod steps {
         let value = world.encoded_directory.as_deref().unwrap_or_default();
         assert!(value.contains("%20"), "directory was not encoded: {value}");
     }
+
+    #[given(expr = "the user configures an exit binding of {string}")]
+    async fn configures_exit_binding(world: &mut Harness, value: String) {
+        world.keybind_overrides = serde_json::from_str(&format!(
+            r#"{{"app_exit":{}}}"#,
+            serde_json::Value::String(value)
+        ))
+        .expect("override object");
+    }
+
+    #[when(expr = "the keybinding configuration is resolved")]
+    async fn keybindings_resolved(world: &mut Harness) {
+        let keybinds = opencode_tui::config::keybind::Keybinds::resolve(&world.keybind_overrides);
+        world.unknown_keybinds = keybinds.unknown.clone();
+        world.resolved_keybinds = Some(keybinds);
+    }
+
+    #[then(expr = "{string} and {string} both exit the client")]
+    async fn both_exit(world: &mut Harness, first: String, second: String) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        for name in [first, second] {
+            let key = key_event(&name);
+            assert_eq!(
+                keybinds.command_for(key),
+                Some(opencode_tui::config::keybind::Command::Quit),
+                "{name} does not exit"
+            );
+        }
+    }
+
+    #[then(expr = "the default {string} exit binding is replaced")]
+    async fn default_exit_replaced(world: &mut Harness, name: String) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.command_for(key_event(&name)),
+            None,
+            "{name} still exits after the override"
+        );
+    }
+
+    #[given(expr = "the user disables the back binding with {string}")]
+    async fn disables_back_binding(world: &mut Harness, value: String) {
+        world.keybind_overrides = serde_json::from_str(&format!(
+            r#"{{"session_back":{}}}"#,
+            serde_json::Value::String(value)
+        ))
+        .expect("override object");
+        world.resolved_keybinds = Some(opencode_tui::config::keybind::Keybinds::resolve(
+            &world.keybind_overrides,
+        ));
+    }
+
+    #[then(expr = "escape no longer returns to the home screen")]
+    async fn escape_unbound(world: &mut Harness) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(keybinds.command_for(key_event("escape")), None);
+    }
+
+    #[then(expr = "an unrecognized keybind name is reported and ignored")]
+    async fn unknown_keybind_reported(_world: &mut Harness) {
+        let overrides: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"not_a_command":"ctrl+x"}"#).expect("override object");
+        let keybinds = opencode_tui::config::keybind::Keybinds::resolve(&overrides);
+        assert_eq!(keybinds.unknown, vec!["not_a_command".to_string()]);
+    }
 }
 
 use std::process::Stdio;
@@ -453,6 +519,9 @@ struct Harness {
     encoded_directory: Option<String>,
     launched: Option<Launch>,
     prompt_submitted: bool,
+    keybind_overrides: serde_json::Map<String, serde_json::Value>,
+    resolved_keybinds: Option<opencode_tui::config::keybind::Keybinds>,
+    unknown_keybinds: Vec<String>,
 }
 
 impl Harness {
@@ -470,6 +539,9 @@ impl Harness {
             encoded_directory: None,
             launched: None,
             prompt_submitted: false,
+            keybind_overrides: serde_json::Map::new(),
+            resolved_keybinds: None,
+            unknown_keybinds: Vec::new(),
         })
     }
 
@@ -614,6 +686,28 @@ fn launch(url: &str) -> Launch {
 
 fn envelope(payload: &str) -> opencode_tui::context::event::Envelope {
     serde_json::from_str(&format!(r#"{{"payload":{payload},"directory":"/d"}}"#)).expect("envelope")
+}
+
+/// Build a key event from the upstream binding name (`ctrl+d`, `escape`, `q`).
+fn key_event(name: &str) -> crossterm::event::KeyEvent {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut ctrl = false;
+    let mut code = None;
+    for part in name.split('+') {
+        match part.trim().to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => ctrl = true,
+            "shift" => {}
+            "escape" | "esc" => code = Some(KeyCode::Esc),
+            "enter" | "return" => code = Some(KeyCode::Enter),
+            other => code = Some(KeyCode::Char(other.chars().next().expect("key name"))),
+        }
+    }
+    let modifiers = if ctrl {
+        KeyModifiers::CONTROL
+    } else {
+        KeyModifiers::NONE
+    };
+    KeyEvent::new(code.expect("key name"), modifiers)
 }
 
 #[tokio::main]

@@ -148,9 +148,26 @@ owner/deps → rollout/rollback.
 - **Scenario:** "The directory scope is carried and encoded".
 - **RED:** unit tests already added in S1 cover encoding; add a `util` test for
   `abbreviate_home`. Command: `just test`.
-- **GREEN:** already shipped; tests close the gap. Optional: read
-  `~/.config/opencode/tui.json` keybind overrides (deferred unless requested).
+- **GREEN:** already shipped; tests close the gap. Keybind overrides from
+  `~/.config/opencode/tui.json` shipped as S6b (below).
 - **Deps:** S1. **Rollback:** none, additive.
+
+### S6b — Keybind overrides from `tui.json`
+
+- **Observable:** `~/.config/opencode/tui.json` `keybinds` entries replace the
+  built-in bindings; `"none"`/`false` disables one; unknown or malformed keys are
+  reported and ignored rather than silently applied.
+- **Scenario:** "Keybindings can be overridden from tui.json".
+- **RED:** `config::keybind` unit tests for defaults, lists, `none`/`false`, and
+  unknown-key reporting; the contract scenario asserts the same through the real
+  resolver. Command: `just test` / `just contracts`.
+- **GREEN:** `Keybinds::resolve` merges user overrides over `defaults()` using the
+  upstream binding-string form (`ctrl+c`, `escape,q`, `none`); `config::load_keybinds`
+  reads `$OPENCODE_CONFIG_DIR/tui.json` or `~/.config/opencode/tui.json` and
+  falls back to defaults on a missing or malformed file. A malformed value is
+  recorded in `Keybinds::unknown` and warned, not applied.
+- **Deps:** S1. **Rollback:** delete the overrides and the loader; defaults are
+  built in.
 
 ### S7 — Bind the behavior contract
 
@@ -232,8 +249,8 @@ backoff. S3 installs the transcript from `GET /session/{id}/message` and folds
 `permission.updated` read-only and clears it on `permission.replied`. S6 shell
 polish shipped with the others: `Ctrl-C` quits, `Enter` opens or submits, `Esc`
 returns, `q` quits on the home screen only. S7 binds the contract: `just
-contracts` runs the seven offline scenarios through cucumber-rs against a pinned
+contracts` runs the eight offline scenarios through cucumber-rs against a pinned
 `opencode serve`, and `just contracts-live` adds the model-dependent `@live`
-prompt scenario. Reading `~/.config/opencode/tui.json` keybind overrides remains
-unimplemented. Frontier Q1–Q4 remain open with defaults in use: devenv +
+prompt scenario. S6b reads `~/.config/opencode/tui.json` `keybinds` overrides,
+with `none`/`false` to disable and unknown keys reported. Frontier Q1–Q4 remain open with defaults in use: devenv +
 justfile only; single crate; no permission answering in M1; GitHub Actions CI.

@@ -14,7 +14,7 @@ use crate::context::route::Route;
 use crate::context::sdk::OpencodeClient;
 use crate::context::sync::Store;
 use crate::context::theme::Theme;
-use crate::keymap::{self, Command};
+use crate::keymap::{Command, Keybinds};
 use crate::runtime::Args;
 
 /// Tracer-bullet M1: connect, load the session list, hold the event stream and
@@ -54,12 +54,14 @@ pub async fn run(args: Args) -> Result<()> {
     let selected = 0usize;
     let theme = Theme::default();
     let mut prompt = Prompt::default();
+    let keybinds = crate::config::load_keybinds();
 
     let mut terminal = ratatui::init();
     let view = View {
         client: &client,
         theme: &theme,
         location: &location,
+        keybinds: &keybinds,
     };
     let outcome = draw_loop(
         &mut terminal,
@@ -81,6 +83,7 @@ struct View<'a> {
     client: &'a OpencodeClient,
     theme: &'a Theme,
     location: &'a str,
+    keybinds: &'a Keybinds,
 }
 
 /// Subscribe to `/global/event` and forward decoded envelopes, reconnecting
@@ -136,7 +139,7 @@ async fn draw_loop(
 
         if event::poll(Duration::from_millis(100))? {
             if let TerminalEvent::Key(key) = event::read()? {
-                match keymap::command_for(key) {
+                match view.keybinds.command_for(key) {
                     Some(Command::Quit) => return Ok(()),
                     Some(Command::Enter) => match route {
                         Route::Home => open_session(store, route, selected, view).await,

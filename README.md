@@ -20,7 +20,7 @@ First milestone (M1) tracer bullet: **attach + read + prompt**.
 
 The behavior contract is
 [`features/attach-and-prompt.feature`](features/attach-and-prompt.feature). The
-seven offline scenarios run through cucumber-rs against a pinned
+eight offline scenarios run through cucumber-rs against a pinned
 `opencode serve` (`just contracts`). The prompt reply needs a model provider, so
 that scenario is tagged `@live` and runs only under `just contracts-live`.
 
@@ -36,6 +36,16 @@ cargo run -- --url http://127.0.0.1:4096 --check   # headless readiness probe
 scope is sent as an URL-encoded `directory` query parameter on reads and as the
 `x-opencode-directory` header on writes, matching the upstream SDK. Credentials
 in `--url` userinfo are redacted from errors and the status line.
+
+Keybindings come from `$OPENCODE_CONFIG_DIR/tui.json` (default
+`~/.config/opencode/tui.json`), using the upstream binding-string form:
+
+```json
+{ "keybinds": { "app_exit": "ctrl+d,q", "session_back": "none" } }
+```
+
+Unknown or malformed keys are reported and ignored. A missing or unreadable
+file falls back to the built-in defaults.
 
 ## Development
 
