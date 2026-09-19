@@ -82,6 +82,40 @@ pub struct Message {
     pub role: String,
 }
 
+/// A pending permission request (v1 `permission.updated`). M1 renders it
+/// read-only; `pattern` is the tool argument scope the server is asking about.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Permission {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub pattern: Option<serde_json::Value>,
+    #[serde(rename = "sessionID")]
+    pub session_id: String,
+    pub title: String,
+}
+
+impl Permission {
+    /// One-line summary for the read-only banner.
+    pub fn display(&self) -> String {
+        match &self.pattern {
+            Some(serde_json::Value::String(pattern)) => {
+                format!("[permission {}] {} ({pattern})", self.kind, self.title)
+            }
+            Some(serde_json::Value::Array(patterns)) => {
+                let joined = patterns
+                    .iter()
+                    .filter_map(|value| value.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[permission {}] {} ({joined})", self.kind, self.title)
+            }
+            _ => format!("[permission {}] {}", self.kind, self.title),
+        }
+    }
+}
+
 /// A part plus the identity needed to upsert it from `message.part.updated`.
 #[derive(Clone, Debug, serde::Deserialize)]
 pub struct PartEntry {
@@ -276,6 +310,25 @@ impl OpencodeClient {
         serde_json::from_str(&body).context("decode transcript")
     }
 
+    /// Send a text prompt to a session (v1 `POST /session/{id}/message`). The
+    /// reply arrives on the event stream, not in this response.
+    pub async fn send_prompt(&self, session_id: &str, text: &str) -> Result<()> {
+        let path = format!("/session/{session_id}/message");
+        let response = self
+            .request(Method::POST, &path, "application/json")
+            .json(&prompt_body(text))
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .with_context(|| format!("POST {}", self.display_url()))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            bail!("POST {path} -> {status}: {body}");
+        }
+        Ok(())
+    }
+
     /// Subscribe to the server's global event stream. Mirrors the upstream
     /// `sdk.global.event` subscription; reconnect/backoff is the caller's job.
     pub async fn event_stream(
@@ -310,9 +363,23 @@ impl OpencodeClient {
     }
 }
 
+/// Request body for `POST /session/{id}/message`, mirroring the upstream
+/// `SessionPromptData` `parts` shape.
+fn prompt_body(text: &str) -> serde_json::Value {
+    serde_json::json!({ "parts": [{ "type": "text", "text": text }] })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompt_body_is_a_single_text_part() {
+        assert_eq!(
+            prompt_body("pong"),
+            serde_json::json!({ "parts": [{ "type": "text", "text": "pong" }] })
+        );
+    }
 
     #[test]
     fn directory_encoding_matches_encode_uri_component() {

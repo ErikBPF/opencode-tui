@@ -114,24 +114,29 @@ owner/deps → rollout/rollback.
   non-2xx mapping; a `context::prompt` unit test for input editing; a reducer
   test that an optimistic user part and the streamed assistant part both land
   once. Command: `just test`. Expected failure: there is no prompt type or POST.
-- **GREEN:** add `context/prompt.rs` (mirrors upstream `context/prompt.tsx`),
-  `component/prompt.rs` (input line), `sdk::prompt(session_id, text)`; wire the
-  session screen and keymap (`Enter` submits, `Esc` returns).
+- **GREEN:** add `context/prompt.rs` (mirrors upstream `context/prompt.tsx`)
+  and the session-screen input line; `sdk::send_prompt(session_id, text)`
+  mirrors the upstream `SessionPromptData` `parts` shape.
 - **Checks:** `just ci`; live test asserting a `pong` part arrives within a
   bounded wait; the reply must be built from the event stream, not from the POST
   response.
 - **Deps:** S3. **Rollback:** hide the prompt line; the POST is additive.
+- **As built:** `Enter` is one command with route-dependent meaning: on the home
+  screen it opens the selected session, in a session it submits. `q` quits only
+  on the home screen (plain `q` is prompt text); `Ctrl-C` quits anywhere; `Esc`
+  returns to the list.
 
 ### S5 — Permission requests are surfaced, not answered
 
-- **Observable:** a `permission.asked` event renders the request and its options;
-  the client does not call the reply endpoint.
+- **Observable:** a `permission.updated` event renders the request and its
+  scope; the client does not call the reply endpoint.
 - **Scenario:** "A permission request is surfaced but not answered".
-- **RED:** reducer test that a fixture `permission.asked` sets a pending
-  permission; a render test shows its options. Command: `just test`. Expected
-  failure: the event is decoded but dropped.
-- **GREEN:** add `Store.pending_permission` and a read-only banner on the session
-  screen. No reply action (frontier Q3).
+- **RED:** reducer test that a fixture `permission.updated` sets a pending
+  permission for the open session; the banner renders its title and pattern.
+  Command: `just test`. Expected failure: the event is decoded but dropped.
+- **GREEN:** add `Store.pending_permission`, the `Permission` wire type, and a
+  read-only banner on the session screen cleared by `permission.replied`. No
+  reply action (frontier Q3).
 - **Checks:** `just ci`; live test that a denied tool shows the banner and the
   session continues.
 - **Deps:** S3. **Rollback:** remove the banner; the store field is additive.
@@ -209,14 +214,19 @@ stub-server reconnect test, `Args` unit tests, and the cucumber binding.
 
 ## Next
 
-`/ip` slices: **S1, S2 and S3 are implemented**: `Args` is parsed by a pure
-`parse(argv, url_env, dir_env)` with five unit tests; the live test is
-opt-in via `just live`; `app::spawn_event_stream` is exercised by a stub
-TCP/SSE server test that closes the stream and observes the second
-`server.connected` after the 1s backoff; and S3 installs the transcript from
+`/ip` slices: **S1–S5 are implemented** (S6 shell polish shipped with them):
+`Args` is parsed by a pure `parse(argv, url_env, dir_env)` with five unit tests;
+the live test is opt-in via `just live`; `app::spawn_event_stream` is exercised
+by a stub TCP/SSE server test that closes the stream and observes the second
+`server.connected` after the 1s backoff; S3 installs the transcript from
 `GET /session/{id}/message` and folds `message.updated` /
-`message.part.updated` into the open session (21 tests, 20 passing + 1 ignored).
-Remaining: S4 prompt, S5 read-only permission, S6 CLI/config
-polish, S7 cucumber binding. Frontier Q1–Q4 remain open with defaults in use:
-devenv + justfile only; single crate; no permission answering in M1; GitHub
-Actions CI.
+`message.part.updated` into the open session; S4 adds `context/prompt.rs` and
+`POST /session/{id}/message`; S5 surfaces `permission.updated` read-only and
+clears it on `permission.replied` (23 tests, 22 passing + 1 ignored).
+S6 reads `~/.config/opencode/tui.json` keybind overrides (not implemented; the
+built-in bindings are `Ctrl-C` quit, `Enter` open/submit, `Esc` back, `q` quits
+on the home screen only).
+Remaining: **S7 cucumber binding** — the last slice that makes the `.feature`
+scenarios runnable and observed failing before S3–S5. Frontier Q1–Q4 remain
+open with defaults in use: devenv + justfile only; single crate; no permission
+answering in M1; GitHub Actions CI.

@@ -4,21 +4,31 @@ use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
-use crate::context::sdk::{MessageWithParts, Session};
+use crate::context::sdk::{MessageWithParts, Permission, Session};
 
 /// Session screen. Mirrors upstream `routes/session/index.tsx`: the loaded
-/// transcript, grouped by message and rendered by part type.
+/// transcript, grouped by message and rendered by part type, plus a read-only
+/// permission banner when the server is waiting for an answer.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
     session: Option<&Session>,
     messages: &[MessageWithParts],
+    prompt: &str,
+    permission: Option<&Permission>,
 ) {
     let title = session
         .map(|session| session.title.clone().unwrap_or_else(|| session.id.clone()))
         .unwrap_or_else(|| "Session".to_string());
 
     let mut lines: Vec<Line> = Vec::new();
+    if let Some(permission) = permission {
+        lines.push(
+            Line::from(permission.display()).style(Style::default().add_modifier(Modifier::BOLD)),
+        );
+        lines.push(Line::from("(read-only: answering is not supported yet)"));
+        lines.push(Line::from(""));
+    }
     for message in messages {
         lines.push(
             Line::from(format!("{}:", message.info.role))
@@ -35,6 +45,8 @@ pub fn render(
     if lines.is_empty() {
         lines.push(Line::from("No messages yet."));
     }
+    lines.push(Line::from(""));
+    lines.push(Line::from(format!("> {prompt}")));
 
     let paragraph = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(title))

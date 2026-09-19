@@ -45,8 +45,10 @@ pub enum Event {
     MessageUpdated { properties: serde_json::Value },
     #[serde(rename = "message.part.updated")]
     MessagePartUpdated { properties: serde_json::Value },
-    #[serde(rename = "permission.asked")]
-    PermissionAsked { properties: serde_json::Value },
+    #[serde(rename = "permission.updated")]
+    PermissionUpdated { properties: serde_json::Value },
+    #[serde(rename = "permission.replied")]
+    PermissionReplied { properties: serde_json::Value },
     #[serde(rename = "sync")]
     Sync,
     #[serde(other)]

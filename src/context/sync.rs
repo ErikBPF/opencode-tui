@@ -1,5 +1,5 @@
 use crate::context::event::{Envelope, Event};
-use crate::context::sdk::{Message, MessageWithParts, PartEntry, Session};
+use crate::context::sdk::{Message, MessageWithParts, PartEntry, Permission, Session};
 
 /// Local state lifecycle. Mirrors upstream `context/sync.tsx`'s
 /// `loading | partial | complete` status.
@@ -20,6 +20,8 @@ pub struct Store {
     /// The open session's transcript. M1 tracks one session at a time.
     pub session: Option<String>,
     pub messages: Vec<MessageWithParts>,
+    /// A permission request the server is waiting on. M1 shows it read-only.
+    pub pending_permission: Option<Permission>,
 }
 
 impl Store {
@@ -73,6 +75,24 @@ impl Store {
                 let part = properties.get("part").cloned().unwrap_or_default();
                 if let Ok(entry) = serde_json::from_value::<PartEntry>(part) {
                     self.upsert_part(entry);
+                }
+            }
+            Event::PermissionUpdated { properties } => {
+                if let Ok(permission) = serde_json::from_value::<Permission>(properties.clone()) {
+                    if self.session.as_deref() == Some(permission.session_id.as_str()) {
+                        self.pending_permission = Some(permission);
+                    }
+                }
+            }
+            Event::PermissionReplied { properties } => {
+                if let Some(id) = properties.get("permissionID").and_then(|id| id.as_str()) {
+                    if self
+                        .pending_permission
+                        .as_ref()
+                        .is_some_and(|permission| permission.id == id)
+                    {
+                        self.pending_permission = None;
+                    }
                 }
             }
             _ => {}
@@ -190,5 +210,21 @@ mod tests {
         ));
         assert_eq!(store.messages[0].parts.len(), 1);
         assert_eq!(store.messages[0].parts[0].part.display(), "hello");
+    }
+
+    #[test]
+    fn permission_updates_set_and_replies_clear_the_pending_request() {
+        let mut store = Store::default();
+        store.open_session("s1".to_string(), Vec::new());
+        store.apply(&envelope(
+            r#"{"payload":{"type":"permission.updated","properties":{"id":"perm1","type":"bash","sessionID":"s1","title":"Run rm","pattern":"rm -rf /tmp/x"}}}"#,
+        ));
+        let pending = store.pending_permission.as_ref().expect("pending");
+        assert!(pending.display().contains("Run rm"));
+
+        store.apply(&envelope(
+            r#"{"payload":{"type":"permission.replied","properties":{"sessionID":"s1","permissionID":"perm1","response":"always"}}}"#,
+        ));
+        assert!(store.pending_permission.is_none());
     }
 }

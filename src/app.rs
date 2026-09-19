@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event as TerminalEvent};
+use crossterm::event::{self, Event as TerminalEvent, KeyCode, KeyModifiers};
 use futures::StreamExt;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -9,6 +9,7 @@ use ratatui::Frame;
 use tokio::sync::mpsc;
 
 use crate::context::event::Envelope;
+use crate::context::prompt::Prompt;
 use crate::context::route::Route;
 use crate::context::sdk::OpencodeClient;
 use crate::context::sync::Store;
@@ -45,6 +46,7 @@ pub async fn run(args: Args) -> Result<()> {
     let mut route = Route::default();
     let selected = 0usize;
     let theme = Theme::default();
+    let mut prompt = Prompt::default();
 
     let mut terminal = ratatui::init();
     let view = View {
@@ -59,6 +61,7 @@ pub async fn run(args: Args) -> Result<()> {
         &mut route,
         selected,
         &view,
+        &mut prompt,
     )
     .await;
     ratatui::restore();
@@ -112,9 +115,10 @@ async fn draw_loop(
     route: &mut Route,
     selected: usize,
     view: &View<'_>,
+    prompt: &mut Prompt,
 ) -> Result<()> {
     loop {
-        terminal.draw(|frame| draw(frame, store, route, selected, view))?;
+        terminal.draw(|frame| draw(frame, store, route, selected, view, prompt))?;
 
         while let Ok(message) = receiver.try_recv() {
             match message {
@@ -127,25 +131,80 @@ async fn draw_loop(
             if let TerminalEvent::Key(key) = event::read()? {
                 match keymap::command_for(key) {
                     Some(Command::Quit) => return Ok(()),
-                    Some(Command::OpenSession) => {
-                        if let Some(session) = store.sessions.get(selected).cloned() {
-                            match view.client.list_messages(&session.id).await {
-                                Ok(messages) => {
-                                    store.open_session(session.id.clone(), messages);
-                                    *route = Route::Session(session.id);
-                                }
-                                Err(err) => tracing::warn!(%err, "failed to load transcript"),
-                            }
+                    Some(Command::Enter) => match route {
+                        Route::Home => open_session(store, route, selected, view).await,
+                        Route::Session(_) => submit_prompt(route, prompt, view).await,
+                    },
+                    Some(Command::Back) => *route = Route::Home,
+                    None => {
+                        // `q` quits only on the home screen; in a session it is
+                        // prompt text.
+                        if matches!(route, Route::Home)
+                            && key.code == KeyCode::Char('q')
+                            && key.modifiers.is_empty()
+                        {
+                            return Ok(());
                         }
+                        edit_prompt(key, route, prompt);
                     }
-                    Some(Command::Back) | None => *route = Route::Home,
                 }
             }
         }
     }
 }
 
-fn draw(frame: &mut Frame, store: &Store, route: &Route, selected: usize, view: &View<'_>) {
+/// Load the selected session's transcript and open it.
+async fn open_session(store: &mut Store, route: &mut Route, selected: usize, view: &View<'_>) {
+    let Some(session) = store.sessions.get(selected).cloned() else {
+        return;
+    };
+    match view.client.list_messages(&session.id).await {
+        Ok(messages) => {
+            store.open_session(session.id.clone(), messages);
+            *route = Route::Session(session.id);
+        }
+        Err(err) => tracing::warn!(%err, "failed to load transcript"),
+    }
+}
+
+/// Submit the buffered prompt to the open session. The reply arrives on the
+/// event stream, so only a successful send clears the buffer.
+async fn submit_prompt(route: &Route, prompt: &mut Prompt, view: &View<'_>) {
+    let Route::Session(id) = route else {
+        return;
+    };
+    if prompt.is_empty() {
+        return;
+    }
+    match view.client.send_prompt(id, prompt.text()).await {
+        Ok(()) => {
+            prompt.take();
+        }
+        Err(err) => tracing::warn!(%err, "failed to send prompt"),
+    }
+}
+
+/// Apply a plain-text key to the prompt buffer while a session is open.
+fn edit_prompt(key: crossterm::event::KeyEvent, route: &Route, prompt: &mut Prompt) {
+    if !matches!(route, Route::Session(_)) {
+        return;
+    }
+    let control = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char(character) if !control => prompt.push(character),
+        KeyCode::Backspace => prompt.pop(),
+        _ => {}
+    }
+}
+
+fn draw(
+    frame: &mut Frame,
+    store: &Store,
+    route: &Route,
+    selected: usize,
+    view: &View<'_>,
+    prompt: &Prompt,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -155,7 +214,14 @@ fn draw(frame: &mut Frame, store: &Store, route: &Route, selected: usize, view: 
         Route::Home => crate::routes::home::render(frame, chunks[0], store, selected),
         Route::Session(id) => {
             let session = store.sessions.iter().find(|session| &session.id == id);
-            crate::routes::session::render(frame, chunks[0], session, &store.messages);
+            crate::routes::session::render(
+                frame,
+                chunks[0],
+                session,
+                &store.messages,
+                prompt.text(),
+                store.pending_permission.as_ref(),
+            );
         }
     }
 

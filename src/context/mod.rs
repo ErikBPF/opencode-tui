@@ -1,6 +1,7 @@
 //! Client context providers. Each module mirrors an upstream
 //! `packages/tui/src/context/*` provider.
 pub mod event;
+pub mod prompt;
 pub mod route;
 pub mod sdk;
 pub mod sync;

@@ -52,8 +52,8 @@ Feature: Attach to an opencode server and interact with a session
 
   Scenario: A permission request is surfaced but not answered
     Given a session requests permission for a tool
-    When the permission event arrives
-    Then the client renders the request and its options
+    When the server publishes a permission.updated event
+    Then the client renders the request and its scope
     And the client does not reply on the permission endpoint
 
   Scenario: A dropped event stream degrades and recovers
