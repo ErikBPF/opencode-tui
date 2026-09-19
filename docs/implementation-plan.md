@@ -209,6 +209,12 @@ stub-server reconnect test, `Args` unit tests, and the cucumber binding.
 
 ## Next
 
-`/ip` slices S1–S7 remain; the RV revision closed the S1/S2 pure seams. Frontier
-Q1–Q4 remain open with defaults in use: devenv + justfile only; single crate; no
-permission answering in M1; GitHub Actions CI.
+`/ip` slices: **S1 and S2 are implemented**: `Args` is parsed by a pure
+`parse(argv, url_env, dir_env)` with five unit tests; the live test is
+opt-in via `just live`; and `app::spawn_event_stream` is exercised by a stub
+TCP/SSE server test that closes the stream and observes the second
+`server.connected` after the 1s backoff (20 tests, 19 passing + 1 ignored).
+Remaining: S3 transcript, S4 prompt, S5 read-only permission, S6 CLI/config
+polish, S7 cucumber binding. Frontier Q1–Q4 remain open with defaults in use:
+devenv + justfile only; single crate; no permission answering in M1; GitHub
+Actions CI.

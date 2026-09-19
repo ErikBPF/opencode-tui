@@ -221,4 +221,15 @@ mod tests {
             "http://host:4096/session"
         );
     }
+
+    /// Opt-in: exercises the real server. Run with `just live` against a
+    /// running `opencode serve`.
+    #[tokio::test]
+    #[ignore = "requires a running server; set OPENCODE_TUI_LIVE_URL"]
+    async fn live_lists_sessions() {
+        let url = std::env::var("OPENCODE_TUI_LIVE_URL")
+            .expect("OPENCODE_TUI_LIVE_URL must be set for the live test");
+        let client = OpencodeClient::new(url, None).unwrap();
+        client.list_sessions().await.unwrap();
+    }
 }

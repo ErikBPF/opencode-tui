@@ -67,3 +67,7 @@ ci: format-check lint test features contracts
 url := env_var_or_default("OPENCODE_URL", "http://127.0.0.1:4096")
 run:
     cargo run -- --url {{url}}
+
+# Run the opt-in live tests against a running server.
+live server="http://127.0.0.1:4096":
+    OPENCODE_TUI_LIVE_URL={{server}} cargo test -- --ignored

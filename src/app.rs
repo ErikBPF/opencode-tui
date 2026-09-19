@@ -155,3 +155,56 @@ fn draw(
         chunks[1],
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    use super::*;
+    use crate::context::event::Event;
+
+    /// One SSE response carrying a single `server.connected` frame, then close.
+    fn serve_connected(listener: &TcpListener) {
+        let (mut socket, _) = listener.accept().expect("accept");
+        let mut request = [0u8; 1024];
+        let _ = socket.read(&mut request);
+        let body = "data: {\"payload\":{\"type\":\"server.connected\"},\"directory\":\"/d\"}\n\n";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n{body}"
+        );
+        socket.write_all(response.as_bytes()).expect("write");
+        socket.flush().expect("flush");
+    }
+
+    #[tokio::test]
+    async fn reconnects_after_the_stream_drops() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let server = std::thread::spawn(move || {
+            serve_connected(&listener);
+            serve_connected(&listener);
+        });
+
+        let client = OpencodeClient::new(format!("http://{addr}"), None).expect("client");
+        let (sender, mut receiver) = mpsc::channel(16);
+        spawn_event_stream(client, sender);
+
+        let mut connected = 0;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while connected < 2 && tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_secs(10), receiver.recv()).await {
+                Ok(Some(Ok(envelope))) => {
+                    if matches!(envelope.payload, Event::ServerConnected { .. }) {
+                        connected += 1;
+                    }
+                }
+                Ok(Some(Err(_))) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        assert_eq!(connected, 2, "expected a second connection after the drop");
+        server.join().expect("stub server");
+    }
+}
