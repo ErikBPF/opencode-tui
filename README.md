@@ -49,6 +49,7 @@ the status line.
 | `command_list` | `ctrl+p` |
 | `input_submit` | `enter` |
 | `session_interrupt` | `escape` |
+| `session_list` | `<leader>l` |
 | `session_new` | `<leader>n` |
 | `session_next` / `session_previous` | `down` / `up` |
 | `messages_page_up` / `messages_page_down` | `pageup` / `pagedown` |
@@ -57,6 +58,21 @@ the status line.
 The leader prefix is `ctrl+x`; while armed it shows in the footer and the next
 key resolves a leader binding. `session_back` exists as an overridable name but
 is unbound by default, because upstream binds Escape to `session_interrupt`.
+
+### Start screen
+
+The client opens on the start screen, mirroring upstream's home route: the logo,
+the model the server routes to by default (`litellm/deepseek-v4.1-flash` on this
+fleet, read from `GET /config`), and an input line.
+
+- Type and press `enter` to start a conversation — the client creates a session
+  and sends what you typed into it.
+- Press `enter` on an empty line, or `<leader>l`, to browse the session list;
+  `up`/`down` move the selection and `enter` opens one. `escape` goes back.
+- Type `/` to open the slash-command list: client-native entries first
+  (`/exit`, `/new`, `/sessions`, `/help`), then the server's commands
+  (`/init`, `/review`, `/codehero`, ...). Submit one with `enter`; it runs as a
+  server command rather than a prompt.
 
 Keybindings come from `$OPENCODE_CONFIG_DIR/tui.json` (default
 `~/.config/opencode/tui.json`), using the upstream binding-string form:

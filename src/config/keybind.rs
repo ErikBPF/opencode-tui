@@ -21,7 +21,9 @@ pub enum Command {
     SessionNew,
     /// `session_interrupt`: abort the running turn.
     SessionInterrupt,
-    /// `session_next` / `session_previous`: move the home-screen selection.
+    /// `session_list`: show the session list on the home screen.
+    SessionList,
+    /// `session_next` / `session_previous`: move the session-list selection.
     SessionNext,
     SessionPrevious,
     /// `messages_page_up` / `messages_page_down`: scroll the transcript.
@@ -34,11 +36,12 @@ pub enum Command {
 
 impl Command {
     /// Every command the client knows, in the order the palette lists them.
-    pub const ALL: [Command; 12] = [
+    pub const ALL: [Command; 13] = [
         Command::AppExit,
         Command::CommandList,
         Command::InputSubmit,
         Command::SessionBack,
+        Command::SessionList,
         Command::SessionNew,
         Command::SessionInterrupt,
         Command::SessionNext,
@@ -56,6 +59,7 @@ impl Command {
             Command::CommandList => "command_list",
             Command::InputSubmit => "input_submit",
             Command::SessionBack => "session_back",
+            Command::SessionList => "session_list",
             Command::SessionNew => "session_new",
             Command::SessionInterrupt => "session_interrupt",
             Command::SessionNext => "session_next",
@@ -74,6 +78,7 @@ impl Command {
             Command::CommandList => "List available commands",
             Command::InputSubmit => "Open the selected session or submit the prompt",
             Command::SessionBack => "Return to the session list",
+            Command::SessionList => "Show the session list",
             Command::SessionNew => "Create a new session",
             Command::SessionInterrupt => "Interrupt the current session",
             Command::SessionNext => "Select the next session",
@@ -83,6 +88,69 @@ impl Command {
             Command::MessagesFirst => "Navigate to the first message",
             Command::MessagesLast => "Navigate to the last message",
         }
+    }
+
+    /// The slash name the prompt autocomplete exposes, for the commands upstream
+    /// gives one. Mirrors upstream's `slashName` metadata; the client-native
+    /// aliases are listed in [`NATIVE_SLASHES`].
+    pub fn slash_name(self) -> Option<&'static str> {
+        match self {
+            Command::AppExit => Some("exit"),
+            Command::SessionBack => Some("sessions"),
+            Command::SessionList => Some("sessions"),
+            Command::SessionNew => Some("new"),
+            Command::CommandList => Some("help"),
+            _ => None,
+        }
+    }
+}
+
+/// A slash command the client answers itself, without a round trip to the
+/// server. Mirrors upstream's `useCommandSlashes`: client-native entries are
+/// merged with the server's `/command` list in the prompt autocomplete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeSlash {
+    /// The name without the leading slash, e.g. `new`.
+    pub name: &'static str,
+    /// Alternative names that resolve to the same command, e.g. `clear`.
+    pub aliases: &'static [&'static str],
+    pub command: Command,
+}
+
+/// Client-native slashes, mirroring the upstream `slashName`/`slashAliases`
+/// metadata for the commands M1 can honor. Upstream entries with no M1 screen
+/// (`/models`, `/agents`, `/themes`, `/mcps`, `/diff`, ...) are omitted rather
+/// than advertised as dead options.
+pub const NATIVE_SLASHES: &[NativeSlash] = &[
+    NativeSlash {
+        name: "exit",
+        aliases: &["quit"],
+        command: Command::AppExit,
+    },
+    NativeSlash {
+        name: "new",
+        aliases: &["clear"],
+        command: Command::SessionNew,
+    },
+    NativeSlash {
+        name: "sessions",
+        aliases: &[],
+        command: Command::SessionList,
+    },
+    NativeSlash {
+        name: "help",
+        aliases: &[],
+        command: Command::CommandList,
+    },
+];
+
+impl NativeSlash {
+    /// Resolve a slash name (without the leading slash) to a native command.
+    pub fn resolve(name: &str) -> Option<Command> {
+        NATIVE_SLASHES
+            .iter()
+            .find(|entry| entry.name == name || entry.aliases.contains(&name))
+            .map(|entry| entry.command)
     }
 }
 
@@ -187,6 +255,7 @@ pub fn defaults() -> Vec<(Command, Binding)> {
             stroke(KeyCode::Enter, false, false, false),
         ),
         (Command::SessionNew, leader(KeyCode::Char('n'))),
+        (Command::SessionList, leader(KeyCode::Char('l'))),
         (
             Command::SessionInterrupt,
             stroke(KeyCode::Esc, false, false, false),
@@ -545,5 +614,16 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total);
+    }
+
+    #[test]
+    fn native_slashes_resolve_names_and_aliases() {
+        assert_eq!(NativeSlash::resolve("new"), Some(Command::SessionNew));
+        assert_eq!(NativeSlash::resolve("clear"), Some(Command::SessionNew));
+        assert_eq!(NativeSlash::resolve("quit"), Some(Command::AppExit));
+        assert_eq!(NativeSlash::resolve("sessions"), Some(Command::SessionList));
+        assert_eq!(NativeSlash::resolve("help"), Some(Command::CommandList));
+        // Unknown names are not native, so they fall through to the server.
+        assert_eq!(NativeSlash::resolve("init"), None);
     }
 }

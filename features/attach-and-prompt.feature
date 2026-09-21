@@ -89,3 +89,11 @@ Feature: Attach to an opencode server and interact with a session
     And the transcript scrolls with page up and page down
     And the leader prefix arms leader bindings
     And pressing the leader prefix then "q" exits the client
+
+  Scenario: The start screen names the model and offers both entries
+    Given the default keybinding configuration is loaded
+    And a server reports its configured model
+    Then the start screen shows that model
+    And typing on the start screen fills the prompt
+    And submitting a non-empty start-screen prompt opens a new session
+    And the leader prefix then "l" lists the sessions

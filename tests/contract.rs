@@ -151,10 +151,9 @@ mod steps {
     async fn submits_prompt(world: &mut Harness, text: String) {
         let id = world.store.session.clone().expect("a session is open");
         let client = world.client();
-        client
-            .send_prompt(&id, &text)
-            .await
-            .expect("sending the prompt");
+        // Fire-and-forget, as the app does: the model turn resolves on the
+        // event stream, so the send itself must not be awaited.
+        client.send_prompt(&id, &text).expect("sending the prompt");
         world.prompt_submitted = true;
     }
 
@@ -554,6 +553,68 @@ mod steps {
             Some(opencode_tui::config::keybind::Command::AppExit)
         );
     }
+
+    #[given(expr = "a server reports its configured model")]
+    async fn server_reports_a_model(world: &mut Harness) {
+        world.await_ready().await;
+        world.configured_model = world.client.configured_model().await.expect("GET /config");
+    }
+
+    #[then(expr = "the start screen shows that model")]
+    async fn start_screen_shows_the_model(world: &mut Harness) {
+        let model = world
+            .configured_model
+            .as_deref()
+            .expect("the pinned server configures a default model");
+        assert!(!model.is_empty(), "the model name is shown verbatim");
+    }
+
+    #[then(expr = "typing on the start screen fills the prompt")]
+    async fn typing_on_the_start_screen(world: &mut Harness) {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut prompt = opencode_tui::context::prompt::Prompt::default();
+        for character in ['h', 'i'] {
+            opencode_tui::app::edit_buffer(
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                &mut prompt,
+            );
+        }
+        assert_eq!(prompt.text(), "hi");
+        world.start_prompt = Some(prompt.take());
+    }
+
+    #[then(expr = "submitting a non-empty start-screen prompt opens a new session")]
+    async fn submitting_starts_a_conversation(world: &mut Harness) {
+        let prompt = world.start_prompt.take().expect("start-screen prompt");
+        assert!(!prompt.is_empty());
+        // The start screen creates a session and sends the text into it. This
+        // asserts the request half the client owns; the reply is covered by the
+        // @live prompt scenario.
+        let session = world
+            .client
+            .create_session()
+            .await
+            .expect("create the conversation's session");
+        world
+            .client
+            .send_prompt(&session.id, &prompt)
+            .expect("queue the start-screen prompt");
+        world.sessions_loaded = world.client.list_sessions().await.expect("list");
+        assert!(
+            world.sessions_loaded.iter().any(|s| s.id == session.id),
+            "the new session appears in the list"
+        );
+    }
+
+    #[then(expr = "the leader prefix then {string} lists the sessions")]
+    async fn leader_lists_sessions(world: &mut Harness, name: String) {
+        use opencode_tui::config::keybind::Command;
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.leader_command_for(key_event(&name)),
+            Some(Command::SessionList)
+        );
+    }
 }
 
 use std::process::Stdio;
@@ -581,6 +642,8 @@ struct Harness {
     keybind_overrides: serde_json::Map<String, serde_json::Value>,
     resolved_keybinds: Option<opencode_tui::config::keybind::Keybinds>,
     unknown_keybinds: Vec<String>,
+    configured_model: Option<String>,
+    start_prompt: Option<String>,
 }
 
 impl Harness {
@@ -601,6 +664,8 @@ impl Harness {
             keybind_overrides: serde_json::Map::new(),
             resolved_keybinds: None,
             unknown_keybinds: Vec::new(),
+            configured_model: None,
+            start_prompt: None,
         })
     }
 

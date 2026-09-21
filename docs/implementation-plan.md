@@ -289,5 +289,36 @@ disable and unknown keys reported.
 - **Deps:** S8. **Rollback:** revert the render return to the line count and drop
   the footer error branch.
 
+### S8c — Start screen, native slashes, and a responsive send
+
+- **Observable:** the client opens on a start screen showing the logo, the model
+  the server routes to (`GET /config`), and an input line; typing fills the
+  prompt and `enter` starts a conversation (creates a session and sends the
+  text), while an empty `enter` or `<leader>l` opens the session list. Typing
+  `/` lists client-native commands first, then the server's. A prompt is queued
+  without waiting for the model turn, so the UI stays live during generation.
+- **Scenarios:** "The start screen names the model and offers both entries" plus
+  the slash-command coverage in "The default keymap covers navigation and the
+  leader prefix".
+- **GREEN:** `routes::home::render` draws the logo (`LOGO_LEFT`/`LOGO_RIGHT`,
+  mirroring upstream `logo.ts`), the model line, the `Ask anything…` placeholder
+  with an example, the session-count hint, and the session list when
+  `App::session_list` is set. `Command::SessionList` (`<leader>l`) toggles it;
+  `session_back`/`escape` leaves it. `NativeSlash`/`NATIVE_SLASHES` and
+  `Command::slash_name` supply the native entries; `app::native_slash_command`
+  routes a typed `/name` locally and `submit_prompt` sends anything matching
+  `GET /command` through `session.command`, else a normal prompt. The three send
+  calls are fire-and-forget: `OpencodeClient::send_prompt`, `send_command`, and
+  `abort` build the request and hand it to `spawn_send`, which reports only
+  transport/status failures — the reply arrives on the event stream, so a
+  long generation no longer freezes the draw loop.
+- **Note:** the fix for "super slow and with no option for writing". Awaiting
+  `POST /session/{id}/message` (synchronous, 120 s timeout) in the draw loop was
+  the slowness; upstream is fire-and-forget (`component/prompt/index.tsx`).
+  Upstream's wider `slashName` set (`/models`, `/agents`, `/themes`, ...) is
+  omitted where M1 has no screen, rather than advertised as a dead option.
+- **Deps:** S8, S8b. **Rollback:** drop `SessionList` and the start-screen
+  branch; revert `send_prompt`/`send_command` to awaited calls.
+
 Frontier Q1–Q4 remain open with defaults in use: devenv +
 justfile only; single crate; no permission answering in M1; GitHub Actions CI.

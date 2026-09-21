@@ -29,6 +29,12 @@ pub async fn run(args: Args) -> Result<()> {
         .list_sessions()
         .await
         .map_err(|err| anyhow::anyhow!("cannot reach server at {}: {err}", client.display_url()))?;
+    // Slash commands are needed to route `/name` input; a server that fails to
+    // list them must not stop the client from attaching.
+    let commands = client.list_commands().await.unwrap_or_default();
+    // The routing default is shown on the start screen. A server that fails to
+    // report it must not stop the client from attaching.
+    let model = client.configured_model().await.unwrap_or(None);
 
     let location = args
         .directory
@@ -50,6 +56,8 @@ pub async fn run(args: Args) -> Result<()> {
 
     let mut store = Store::default();
     store.loaded(sessions);
+    store.commands = commands;
+    store.model = model;
     let keybinds = crate::config::load_keybinds();
     let mut app = App::default();
 
@@ -86,6 +94,9 @@ struct App {
     prompt: Prompt,
     leader_pending: bool,
     palette: bool,
+    /// Whether the home screen is showing the session list instead of the
+    /// start screen. Mirrors upstream's `session_list` command.
+    session_list: bool,
     /// Last failed action, surfaced in the footer instead of only logged.
     last_error: Option<String>,
 }
@@ -211,11 +222,12 @@ async fn dispatch(key: KeyEvent, store: &mut Store, view: &View<'_>, app: &mut A
     }
 
     // Contextual fallbacks not bound by default.
-    if matches!(app.route, Route::Home)
-        && key.code == KeyCode::Char('q')
-        && key.modifiers.is_empty()
-    {
-        return true;
+    if matches!(app.route, Route::Home) {
+        // On the start screen any printable text is the prompt, so `q` quits
+        // only from the session list, where keys are navigation.
+        if app.session_list && key.code == KeyCode::Char('q') && key.modifiers.is_empty() {
+            return true;
+        }
     }
     edit_prompt(key, app);
     false
@@ -223,25 +235,79 @@ async fn dispatch(key: KeyEvent, store: &mut Store, view: &View<'_>, app: &mut A
 
 /// Apply a command. Returns `true` when it should exit the app.
 async fn run_command(command: Command, store: &mut Store, view: &View<'_>, app: &mut App) -> bool {
+    if command == Command::InputSubmit {
+        return apply_submit(store, view, app).await;
+    }
+    apply_command(command, store, view, app).await
+}
+
+/// The submit action, split out because it is the only command that can dispatch
+/// another command (a native slash typed into the prompt).
+async fn apply_submit(store: &mut Store, view: &View<'_>, app: &mut App) -> bool {
+    match app.route {
+        Route::Home if app.session_list => open_selected_session(store, view, app).await,
+        Route::Home => {
+            // Start a new conversation with the buffered text, mirroring
+            // upstream's home prompt: create a session, then send what was
+            // typed. Empty input just opens the list.
+            if app.prompt.is_empty() {
+                app.session_list = true;
+                return false;
+            }
+            start_conversation(store, view, app).await;
+            return false;
+        }
+        Route::Session(_) => {
+            // A client-native slash is answered locally instead of being sent;
+            // everything else goes out as a prompt or a server command. The
+            // native set never includes `InputSubmit`, so this cannot recurse.
+            match native_slash_command(app.prompt.text()) {
+                Some(native) => {
+                    app.prompt.take();
+                    return apply_command(native, store, view, app).await;
+                }
+                None => submit_prompt(store, view, app),
+            }
+        }
+    }
+    false
+}
+
+/// Apply a command that does not dispatch another command. Returns `true` when
+/// it should exit the app.
+async fn apply_command(
+    command: Command,
+    store: &mut Store,
+    view: &View<'_>,
+    app: &mut App,
+) -> bool {
     match command {
         Command::AppExit => return true,
         Command::CommandList => app.palette = true,
-        Command::InputSubmit => match app.route {
-            Route::Home => open_selected_session(store, view, app).await,
-            Route::Session(_) => submit_prompt(view, app).await,
-        },
+        // `run_command` intercepts `InputSubmit` before this point.
+        Command::InputSubmit => {}
         Command::SessionBack => {
             app.route = Route::Home;
             app.scroll = 0;
+            // `session_back` leaves list mode, mirroring upstream's `escape`.
+            app.session_list = false;
         }
+        Command::SessionList => app.session_list = !app.session_list,
         Command::SessionNew => new_session(store, view, app).await,
-        // Escape is the interrupt key upstream; the pinned v1 API has no
-        // interrupt endpoint, so in a session it returns to the list.
+        // Escape interrupts the running turn server-side, then returns to the
+        // list. Fire-and-forget so a slow abort never stalls the UI.
         Command::SessionInterrupt => {
+            if let Route::Session(id) = &app.route {
+                view.client.abort(id);
+            }
             app.route = Route::Home;
             app.scroll = 0;
+            app.session_list = true;
         }
         Command::SessionNext => {
+            // On the start screen the arrows step through history too, which is
+            // what upstream's prompt history navigation does. M1 has no history
+            // yet, so they only move the selection.
             if !store.sessions.is_empty() {
                 app.selected = (app.selected + 1).min(store.sessions.len() - 1);
             }
@@ -251,6 +317,29 @@ async fn run_command(command: Command, store: &mut Store, view: &View<'_>, app: 
         Command::MessagesPageDown => app.scroll = app.scroll.saturating_add(10),
         Command::MessagesFirst => app.scroll = 0,
         Command::MessagesLast => app.scroll = u16::MAX,
+    }
+    false
+}
+
+/// Create a session and send the buffered start-screen text into it, so "type
+/// and press enter" starts a conversation the way upstream's home prompt does.
+async fn start_conversation(store: &mut Store, view: &View<'_>, app: &mut App) -> bool {
+    let text = app.prompt.text().to_string();
+    match view.client.create_session().await {
+        Ok(session) => {
+            open_session(store, view, app, session.id.clone()).await;
+            // Restore the text the user typed on the start screen: opening a
+            // session clears the prompt only after a successful send.
+            app.prompt.take();
+            for character in text.chars() {
+                app.prompt.push(character);
+            }
+            submit_prompt(store, view, app);
+        }
+        Err(err) => {
+            tracing::warn!(%err, "failed to create session");
+            app.last_error = Some(format!("create session failed: {err}"));
+        }
     }
     false
 }
@@ -293,16 +382,33 @@ async fn open_session(store: &mut Store, view: &View<'_>, app: &mut App, id: Str
     }
 }
 
-/// Submit the buffered prompt to the open session. The reply arrives on the
-/// event stream, so only a successful send clears the buffer.
-async fn submit_prompt(view: &View<'_>, app: &mut App) {
+/// Submit the buffered prompt to the open session.
+///
+/// A leading `/name` where `name` is a client-native slash (`/new`, `/exit`,
+/// `/sessions`, `/help`) is already handled by the caller. Anything else
+/// matching a server command goes to `session.command`; otherwise it is a
+/// normal prompt. The send never awaits the model turn — the reply arrives on
+/// the event stream — so the UI stays responsive during a long generation.
+fn submit_prompt(store: &Store, view: &View<'_>, app: &mut App) {
     let Route::Session(id) = &app.route else {
         return;
     };
     if app.prompt.is_empty() {
         return;
     }
-    match view.client.send_prompt(id, app.prompt.text()).await {
+    let text = app.prompt.text().to_string();
+    let (first_line, rest) = split_command(&text);
+    let name = first_line.trim_start_matches('/');
+    let is_command = first_line.starts_with('/')
+        && !name.is_empty()
+        && store.commands.iter().any(|command| command.name == name);
+
+    let result = if is_command {
+        view.client.send_command(id, name, &rest)
+    } else {
+        view.client.send_prompt(id, &text)
+    };
+    match result {
         Ok(()) => {
             app.prompt.take();
             app.scroll = u16::MAX;
@@ -315,15 +421,44 @@ async fn submit_prompt(view: &View<'_>, app: &mut App) {
     }
 }
 
-/// Apply a plain-text key to the prompt buffer while a session is open.
+/// A client-native slash command buffered in the prompt, if any. The prompt's
+/// first line names it, mirroring upstream's parse.
+fn native_slash_command(prompt: &str) -> Option<Command> {
+    let first_line = prompt.split('\n').next()?;
+    let name = first_line.strip_prefix('/')?.split_whitespace().next()?;
+    crate::config::keybind::NativeSlash::resolve(name)
+}
+
+/// Split input into the first line and the remaining text, mirroring upstream's
+/// command parsing (the first line names the command, the rest is arguments).
+fn split_command(text: &str) -> (&str, String) {
+    match text.split_once('\n') {
+        Some((first, rest)) => (first, rest.to_string()),
+        None => (text, String::new()),
+    }
+}
+
+/// Apply a plain-text key to the prompt buffer. The prompt is live on the home
+/// start screen and while a session is open; the session list is navigation.
 fn edit_prompt(key: KeyEvent, app: &mut App) {
-    if !matches!(app.route, Route::Session(_)) {
+    let accepts_text = match app.route {
+        Route::Session(_) => true,
+        Route::Home => !app.session_list,
+    };
+    if !accepts_text {
         return;
     }
+    edit_buffer(key, &mut app.prompt);
+}
+
+/// The prompt-editing rule on its own: printable keys append, backspace pops,
+/// control chords are commands. Public so the behavior contract exercises the
+/// same rule the UI uses instead of restating it.
+pub fn edit_buffer(key: KeyEvent, prompt: &mut Prompt) {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        KeyCode::Char(character) if !control => app.prompt.push(character),
-        KeyCode::Backspace => app.prompt.pop(),
+        KeyCode::Char(character) if !control => prompt.push(character),
+        KeyCode::Backspace => prompt.pop(),
         _ => {}
     }
 }
@@ -344,7 +479,23 @@ fn draw(frame: &mut Frame, store: &Store, view: &View<'_>, app: &App) -> (usize,
 
     let total = match &app.route {
         Route::Home => {
-            crate::routes::home::render(frame, chunks[0], store, app.selected);
+            let (rows, height) = crate::routes::home::render(
+                frame,
+                chunks[0],
+                &crate::routes::home::HomeView {
+                    store,
+                    home: &view.theme.name,
+                    selected: app.selected,
+                    prompt: app.prompt.text(),
+                    model: store.model.as_deref(),
+                },
+                app.session_list,
+            );
+            // The home screen's footer lives inside the body, so the shared
+            // status line is not drawn over it.
+            if app.last_error.is_none() {
+                return (rows, height);
+            }
             0
         }
         Route::Session(id) => {
@@ -352,11 +503,14 @@ fn draw(frame: &mut Frame, store: &Store, view: &View<'_>, app: &App) -> (usize,
             crate::routes::session::render(
                 frame,
                 chunks[0],
-                session,
-                &store.messages,
-                app.prompt.text(),
-                store.pending_permission.as_ref(),
-                app.scroll,
+                &crate::routes::session::SessionView {
+                    session,
+                    messages: &store.messages,
+                    prompt: app.prompt.text(),
+                    permission: store.pending_permission.as_ref(),
+                    scroll: app.scroll,
+                    commands: &store.commands,
+                },
             )
         }
     };
@@ -400,12 +554,22 @@ mod tests {
     #[test]
     fn typing_edits_the_prompt_only_inside_a_session() {
         let mut app = App::default();
-        // On the home screen printable keys are not prompt text.
+        // On the start screen printable keys are prompt text.
+        edit_prompt(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut app,
+        );
+        assert_eq!(app.prompt.text(), "h");
+        app.prompt = Prompt::default();
+
+        // The session list is navigation, so keys are not text there.
+        app.session_list = true;
         edit_prompt(
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
             &mut app,
         );
         assert!(app.prompt.is_empty());
+        app.session_list = false;
 
         app.route = Route::Session("ses".to_string());
         for character in ['h', 'i'] {

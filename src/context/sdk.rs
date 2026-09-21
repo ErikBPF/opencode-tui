@@ -82,6 +82,24 @@ pub struct Message {
     pub role: String,
 }
 
+/// A server slash command, as returned by `GET /command`. Mirrors the upstream
+/// SDK `Command` type; `template` and `hints` are required by the wire shape but
+/// only `name` and `description` are rendered.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Command {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// The slice of the server config the home screen needs (`GET /config`). The
+/// endpoint returns the whole resolved config; only the routing default is read.
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
 /// A pending permission request (v1 `permission.updated`). M1 renders it
 /// read-only; `pattern` is the tool argument scope the server is asking about.
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -355,23 +373,94 @@ impl OpencodeClient {
         serde_json::from_str(&body).context("decode created session")
     }
 
-    /// Send a text prompt to a session (v1 `POST /session/{id}/message`). The
-    /// reply arrives on the event stream, not in this response.
-    pub async fn send_prompt(&self, session_id: &str, text: &str) -> Result<()> {
+    /// Send a text prompt without waiting for the model turn to finish.
+    ///
+    /// `POST /session/{id}/message` is synchronous — it streams the whole AI
+    /// response and only resolves when the turn completes, which can take
+    /// minutes. Awaiting it would freeze the UI. Upstream fires the same call
+    /// and ignores the response (`void sdk.client.session.prompt(...)`), so this
+    /// returns as soon as the request is accepted and the reply arrives on the
+    /// event stream, exactly like the upstream TUI.
+    pub fn send_prompt(&self, session_id: &str, text: &str) -> Result<()> {
         let path = format!("/session/{session_id}/message");
-        let response = self
+        let request = self
             .request(Method::POST, &path, "application/json")
-            .json(&prompt_body(text))
-            .timeout(Duration::from_secs(120))
+            .json(&prompt_body(text));
+        self.spawn_send(path, request);
+        Ok(())
+    }
+
+    /// Run a slash command (`/name args`) without waiting for the turn.
+    /// Mirrors upstream `sdk.client.session.command`.
+    pub fn send_command(&self, session_id: &str, command: &str, arguments: &str) -> Result<()> {
+        let path = format!("/session/{session_id}/command");
+        let body = serde_json::json!({ "command": command, "arguments": arguments });
+        let request = self
+            .request(Method::POST, &path, "application/json")
+            .json(&body);
+        self.spawn_send(path, request);
+        Ok(())
+    }
+
+    /// Abort the running turn (`POST /session/{id}/abort`), upstream's
+    /// `session_interrupt`. Fire-and-forget: the UI must not wait on it.
+    pub fn abort(&self, session_id: &str) {
+        let path = format!("/session/{session_id}/abort");
+        let request = self.request(Method::POST, &path, "application/json");
+        self.spawn_send(path, request);
+    }
+
+    /// List the server's slash commands (`GET /command`).
+    pub async fn list_commands(&self) -> Result<Vec<Command>> {
+        let response = self
+            .request(Method::GET, "/command", "application/json")
+            .timeout(Duration::from_secs(30))
             .send()
             .await
-            .with_context(|| format!("POST {}", self.display_url()))?;
+            .with_context(|| format!("GET {}/command", self.display_url()))?;
         let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            bail!("POST {path} -> {status}: {body}");
+            bail!("GET /command -> {status}: {body}");
         }
-        Ok(())
+        serde_json::from_str(&body).context("decode command list")
+    }
+
+    /// The model the server routes to when the client does not choose one
+    /// (`GET /config`). Mirrors upstream's `sync.data.config.model`, which the
+    /// start screen shows so the user knows what will answer.
+    pub async fn configured_model(&self) -> Result<Option<String>> {
+        let response = self
+            .request(Method::GET, "/config", "application/json")
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .with_context(|| format!("GET {}/config", self.display_url()))?;
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("GET /config -> {status}: {body}");
+        }
+        let config: Config = serde_json::from_str(&body).context("decode config")?;
+        Ok(config.model)
+    }
+
+    /// Fire a write request in the background and report only transport or
+    /// status failures. The turn's result arrives on the event stream.
+    fn spawn_send(&self, path: String, request: reqwest::RequestBuilder) {
+        let url = self.display_url();
+        tokio::spawn(async move {
+            match request.send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    if !status.is_success() {
+                        let body = response.text().await.unwrap_or_default();
+                        tracing::warn!(%status, %body, "POST {path} failed");
+                    }
+                }
+                Err(err) => tracing::warn!(%err, "POST {path} to {url} failed"),
+            }
+        });
     }
 
     /// Subscribe to the server's global event stream. Mirrors the upstream

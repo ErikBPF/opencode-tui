@@ -1,5 +1,5 @@
 use crate::context::event::{Envelope, Event};
-use crate::context::sdk::{Message, MessageWithParts, PartEntry, Permission, Session};
+use crate::context::sdk::{Command, Message, MessageWithParts, PartEntry, Permission, Session};
 
 /// Local state lifecycle. Mirrors upstream `context/sync.tsx`'s
 /// `loading | partial | complete` status.
@@ -22,6 +22,11 @@ pub struct Store {
     pub messages: Vec<MessageWithParts>,
     /// A permission request the server is waiting on. M1 shows it read-only.
     pub pending_permission: Option<Permission>,
+    /// Server slash commands, used to route `/name` input.
+    pub commands: Vec<Command>,
+    /// The model the server routes to by default (`GET /config`), shown on the
+    /// start screen so the user knows what will answer.
+    pub model: Option<String>,
 }
 
 impl Store {
