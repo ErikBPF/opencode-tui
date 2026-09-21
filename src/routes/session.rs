@@ -49,10 +49,10 @@ pub fn render(
     if lines.is_empty() {
         lines.push(Line::from("No messages yet."));
     }
-    if !prompt.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!("> {prompt}")));
-    }
+    // The prompt line is always present so an empty session still shows where to
+    // type; it is the last row and the caller bottom-anchors the viewport on it.
+    lines.push(Line::from(""));
+    lines.push(Line::from(format!("> {prompt}")));
 
     // Wrapped rows, not source lines: a long text part occupies several rows,
     // and the caller needs the real height to clamp and bottom-anchor scroll.
