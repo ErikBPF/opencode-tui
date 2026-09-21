@@ -122,9 +122,9 @@ owner/deps → rollout/rollback.
   response.
 - **Deps:** S3. **Rollback:** hide the prompt line; the POST is additive.
 - **As built:** `Enter` is one command with route-dependent meaning: on the home
-  screen it opens the selected session, in a session it submits. `q` quits only
-  on the home screen (plain `q` is prompt text); `Ctrl-C` quits anywhere; `Esc`
-  returns to the list.
+  screen it opens the selected session, in a session it submits. `Ctrl-C` quits
+  anywhere; `Esc` is `session_interrupt` (returns to the list, since the pinned
+  v1 API has no interrupt endpoint); bare `q` quits only on the home screen.
 
 ### S5 — Permission requests are surfaced, not answered
 
@@ -247,10 +247,31 @@ backoff. S3 installs the transcript from `GET /session/{id}/message` and folds
 `message.updated` / `message.part.updated` into the open session. S4 adds
 `context/prompt.rs` and `POST /session/{id}/message`. S5 surfaces
 `permission.updated` read-only and clears it on `permission.replied`. S6 shell
-polish shipped with the others: `Ctrl-C` quits, `Enter` opens or submits, `Esc`
-returns, `q` quits on the home screen only. S7 binds the contract: `just
-contracts` runs the eight offline scenarios through cucumber-rs against a pinned
-`opencode serve`, and `just contracts-live` adds the model-dependent `@live`
-prompt scenario. S6b reads `~/.config/opencode/tui.json` `keybinds` overrides,
-with `none`/`false` to disable and unknown keys reported. Frontier Q1–Q4 remain open with defaults in use: devenv +
+polish shipped with the others. S7 binds the contract: `just contracts` runs the
+nine offline scenarios through cucumber-rs against a pinned `opencode serve`, and
+`just contracts-live` adds the model-dependent `@live` prompt scenario. S6b reads
+`~/.config/opencode/tui.json` `keybinds` overrides, with `none`/`false` to
+disable and unknown keys reported.
+
+### S8 — Command set, leader prefix, and release build
+
+- **Observable:** the default keymap covers quit (`ctrl+c`, `ctrl+d`, leader+q),
+  the command palette (`ctrl+p`), submit (`enter`), interrupt (`escape`), new
+  session (leader+n), list movement (arrows), and transcript paging
+  (`pageup`/`pagedown`, `home`/`end`); the leader prefix (`ctrl+x`) arms its
+  bindings and shows in the footer.
+- **Scenario:** "The default keymap covers navigation and the leader prefix".
+- **GREEN:** `Command` is the twelve-command upstream-aligned set;
+  `Keybinds::resolve` parses the `leader` override; `app::dispatch` is a leader
+  state machine; `App` holds `selected`, `scroll`, and `palette` state;
+  `component/command_palette.rs` renders `Command::ALL` with its binding and
+  description. Performance: `[profile.dev.package."*"] opt-level = 3` and a
+  `just release` build (5.3 MB) replace the unoptimized 90 MB debug binary for
+  interactive use; `just run` builds and runs the release profile.
+- **Note:** upstream has no `session_back`; Escape binds `session_interrupt` and
+  the pinned v1 API has no interrupt endpoint, so it returns to the list.
+- **Deps:** S4, S6b. **Rollback:** revert to the three-command set; the palette
+  is additive.
+
+Frontier Q1–Q4 remain open with defaults in use: devenv +
 justfile only; single crate; no permission answering in M1; GitHub Actions CI.

@@ -9,6 +9,9 @@ use crate::context::sdk::{MessageWithParts, Permission, Session};
 /// Session screen. Mirrors upstream `routes/session/index.tsx`: the loaded
 /// transcript, grouped by message and rendered by part type, plus a read-only
 /// permission banner when the server is waiting for an answer.
+///
+/// Returns the total number of content lines so the caller can clamp its scroll
+/// offset; `scroll` is the top line to display.
 pub fn render(
     frame: &mut Frame,
     area: Rect,
@@ -16,7 +19,8 @@ pub fn render(
     messages: &[MessageWithParts],
     prompt: &str,
     permission: Option<&Permission>,
-) {
+    scroll: u16,
+) -> usize {
     let title = session
         .map(|session| session.title.clone().unwrap_or_else(|| session.id.clone()))
         .unwrap_or_else(|| "Session".to_string());
@@ -48,8 +52,10 @@ pub fn render(
     lines.push(Line::from(""));
     lines.push(Line::from(format!("> {prompt}")));
 
-    let paragraph = Paragraph::new(Text::from(lines))
+    let paragraph = Paragraph::new(Text::from(lines.clone()))
         .block(Block::default().borders(Borders::ALL).title(title))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll, 0));
     frame.render_widget(paragraph, area);
+    lines.len()
 }

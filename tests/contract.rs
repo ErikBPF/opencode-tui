@@ -454,7 +454,7 @@ mod steps {
             let key = key_event(&name);
             assert_eq!(
                 keybinds.command_for(key),
-                Some(opencode_tui::config::keybind::Command::Quit),
+                Some(opencode_tui::config::keybind::Command::AppExit),
                 "{name} does not exit"
             );
         }
@@ -470,10 +470,10 @@ mod steps {
         );
     }
 
-    #[given(expr = "the user disables the back binding with {string}")]
-    async fn disables_back_binding(world: &mut Harness, value: String) {
+    #[given(expr = "the user disables the interrupt binding with {string}")]
+    async fn disables_interrupt_binding(world: &mut Harness, value: String) {
         world.keybind_overrides = serde_json::from_str(&format!(
-            r#"{{"session_back":{}}}"#,
+            r#"{{"session_interrupt":{}}}"#,
             serde_json::Value::String(value)
         ))
         .expect("override object");
@@ -494,6 +494,65 @@ mod steps {
             serde_json::from_str(r#"{"not_a_command":"ctrl+x"}"#).expect("override object");
         let keybinds = opencode_tui::config::keybind::Keybinds::resolve(&overrides);
         assert_eq!(keybinds.unknown, vec!["not_a_command".to_string()]);
+    }
+
+    #[given(expr = "the default keybinding configuration is loaded")]
+    async fn default_keybindings_loaded(world: &mut Harness) {
+        let empty = serde_json::Map::new();
+        world.resolved_keybinds = Some(opencode_tui::config::keybind::Keybinds::resolve(&empty));
+    }
+
+    #[then(expr = "the command list opens on ctrl+p")]
+    async fn command_list_on_ctrl_p(world: &mut Harness) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.command_for(key_event("ctrl+p")),
+            Some(opencode_tui::config::keybind::Command::CommandList)
+        );
+    }
+
+    #[then(expr = "the session list moves with the arrow keys")]
+    async fn arrows_move_selection(world: &mut Harness) {
+        use opencode_tui::config::keybind::Command;
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.command_for(key_event("down")),
+            Some(Command::SessionNext)
+        );
+        assert_eq!(
+            keybinds.command_for(key_event("up")),
+            Some(Command::SessionPrevious)
+        );
+    }
+
+    #[then(expr = "the transcript scrolls with page up and page down")]
+    async fn pages_scroll_transcript(world: &mut Harness) {
+        use opencode_tui::config::keybind::Command;
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.command_for(key_event("pageup")),
+            Some(Command::MessagesPageUp)
+        );
+        assert_eq!(
+            keybinds.command_for(key_event("pagedown")),
+            Some(Command::MessagesPageDown)
+        );
+    }
+
+    #[then(expr = "the leader prefix arms leader bindings")]
+    async fn leader_arms(world: &mut Harness) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert!(keybinds.is_leader(key_event("ctrl+x")));
+        assert!(!keybinds.is_leader(key_event("ctrl+c")));
+    }
+
+    #[then(expr = "pressing the leader prefix then {string} exits the client")]
+    async fn leader_then_key(world: &mut Harness, name: String) {
+        let keybinds = world.resolved_keybinds.as_ref().expect("resolved keybinds");
+        assert_eq!(
+            keybinds.leader_command_for(key_event(&name)),
+            Some(opencode_tui::config::keybind::Command::AppExit)
+        );
     }
 }
 
@@ -699,6 +758,14 @@ fn key_event(name: &str) -> crossterm::event::KeyEvent {
             "shift" => {}
             "escape" | "esc" => code = Some(KeyCode::Esc),
             "enter" | "return" => code = Some(KeyCode::Enter),
+            "up" => code = Some(KeyCode::Up),
+            "down" => code = Some(KeyCode::Down),
+            "left" => code = Some(KeyCode::Left),
+            "right" => code = Some(KeyCode::Right),
+            "pageup" => code = Some(KeyCode::PageUp),
+            "pagedown" => code = Some(KeyCode::PageDown),
+            "home" => code = Some(KeyCode::Home),
+            "end" => code = Some(KeyCode::End),
             other => code = Some(KeyCode::Char(other.chars().next().expect("key name"))),
         }
     }

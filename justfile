@@ -66,10 +66,16 @@ contracts-live: features
 ci: format-check lint test features contracts
     @echo "CI GREEN (fmt + clippy + tests + features + contracts)"
 
-# Attach to a running server. URL defaults to the local server.
+# Attach to a running server. URL defaults to the local server. Uses the
+# release build: the TUI must redraw smoothly, and an unoptimized build is
+# visibly slow.
 url := env_var_or_default("OPENCODE_URL", "http://127.0.0.1:4096")
-run:
-    cargo run -- --url {{url}}
+run: release
+    ./target/release/opencode-tui --url {{url}}
+
+# Build the optimized binary.
+release:
+    cargo build --release
 
 # Run the opt-in live tests against a running server.
 live server="http://127.0.0.1:4096":

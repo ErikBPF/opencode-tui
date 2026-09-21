@@ -78,6 +78,14 @@ Feature: Attach to an opencode server and interact with a session
     When the keybinding configuration is resolved
     Then "ctrl+d" and "q" both exit the client
     And the default "ctrl+c" exit binding is replaced
-    Given the user disables the back binding with "none"
+    Given the user disables the interrupt binding with "none"
     Then escape no longer returns to the home screen
     And an unrecognized keybind name is reported and ignored
+
+  Scenario: The default keymap covers navigation and the leader prefix
+    Given the default keybinding configuration is loaded
+    Then the command list opens on ctrl+p
+    And the session list moves with the arrow keys
+    And the transcript scrolls with page up and page down
+    And the leader prefix arms leader bindings
+    And pressing the leader prefix then "q" exits the client

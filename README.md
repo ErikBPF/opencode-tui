@@ -28,20 +28,41 @@ that scenario is tagged `@live` and runs only under `just contracts-live`.
 
 ```sh
 opencode serve --port 4096          # in one shell
-just run                            # or: cargo run -- --url http://127.0.0.1:4096 --dir /some/project
-cargo run -- --url http://127.0.0.1:4096 --check   # headless readiness probe
+just run                            # builds release, then runs against OPENCODE_URL
+just run url=http://127.0.0.1:4097  # explicit server
+./target/release/opencode-tui --url http://127.0.0.1:4096 --dir /some/project
+./target/release/opencode-tui --url http://127.0.0.1:4096 --check   # readiness probe
 ```
 
-`OPENCODE_URL` and `OPENCODE_DIRECTORY` provide the defaults. The directory
-scope is sent as an URL-encoded `directory` query parameter on reads and as the
-`x-opencode-directory` header on writes, matching the upstream SDK. Credentials
-in `--url` userinfo are redacted from errors and the status line.
+`just run` builds `target/release/opencode-tui` (release is far more responsive
+than the debug build). `OPENCODE_URL` and `OPENCODE_DIRECTORY` provide the
+defaults. The directory scope is sent as an URL-encoded `directory` query
+parameter on reads and as the `x-opencode-directory` header on writes, matching
+the upstream SDK. Credentials in `--url` userinfo are redacted from errors and
+the status line.
+
+### Default keymap
+
+| Command | Binding |
+|---|---|
+| `app_exit` | `ctrl+c`, `ctrl+d`, `<leader>q` (plus bare `q` on the home screen) |
+| `command_list` | `ctrl+p` |
+| `input_submit` | `enter` |
+| `session_interrupt` | `escape` |
+| `session_new` | `<leader>n` |
+| `session_next` / `session_previous` | `down` / `up` |
+| `messages_page_up` / `messages_page_down` | `pageup` / `pagedown` |
+| `messages_first` / `messages_last` | `home` / `end` |
+
+The leader prefix is `ctrl+x`; while armed it shows in the footer and the next
+key resolves a leader binding. `session_back` exists as an overridable name but
+is unbound by default, because upstream binds Escape to `session_interrupt`.
 
 Keybindings come from `$OPENCODE_CONFIG_DIR/tui.json` (default
 `~/.config/opencode/tui.json`), using the upstream binding-string form:
 
 ```json
-{ "keybinds": { "app_exit": "ctrl+d,q", "session_back": "none" } }
+{ "keybinds": { "app_exit": "ctrl+d,q", "session_interrupt": "none", "leader": "ctrl+a" } }
 ```
 
 Unknown or malformed keys are reported and ignored. A missing or unreadable

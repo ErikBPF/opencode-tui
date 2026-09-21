@@ -24,6 +24,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 cucumber = "0.22"
 
+# Optimize dependencies even in debug builds: an unoptimized ratatui/tokio/
+# reqwest stack is too slow to run the TUI interactively.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+strip = true
+
 # The contract binding runs Cucumber itself, so libtest must not wrap it.
 [[test]]
 name = "contract"
