@@ -86,6 +86,8 @@ struct App {
     prompt: Prompt,
     leader_pending: bool,
     palette: bool,
+    /// Last failed action, surfaced in the footer instead of only logged.
+    last_error: Option<String>,
 }
 
 /// Subscribe to `/global/event` and forward decoded envelopes, reconnecting
@@ -128,11 +130,19 @@ async fn draw_loop(
     app: &mut App,
 ) -> Result<()> {
     loop {
-        // The transcript line count comes back through a cell so the scroll
+        // The transcript row count comes back through a cell so the scroll
         // clamp sees it without threading a return value through the frame.
         let total = std::cell::Cell::new(0usize);
-        terminal.draw(|frame| total.set(draw(frame, store, view, app)))?;
-        app.scroll = app.scroll.min(total.get().saturating_sub(1) as u16);
+        let height = std::cell::Cell::new(0usize);
+        terminal.draw(|frame| {
+            let (rows, viewport) = draw(frame, store, view, app);
+            total.set(rows);
+            height.set(viewport);
+        })?;
+        // Clamp to the last row that still fills the viewport, so
+        // `scroll = u16::MAX` (scroll to bottom) lands on the real end.
+        let last_top = last_scroll(total.get(), height.get());
+        app.scroll = app.scroll.min(last_top);
 
         while let Ok(message) = receiver.try_recv() {
             match message {
@@ -172,6 +182,9 @@ async fn dispatch(key: KeyEvent, store: &mut Store, view: &View<'_>, app: &mut A
         app.palette = false;
         return false;
     }
+
+    // Any key dismisses a surfaced error, so it never lingers over the footer.
+    app.last_error = None;
 
     if let Some(command) = view.keybinds.command_for(key) {
         return run_command(command, store, view, app).await;
@@ -234,7 +247,10 @@ async fn open_selected_session(store: &mut Store, view: &View<'_>, app: &mut App
 async fn new_session(store: &mut Store, view: &View<'_>, app: &mut App) {
     match view.client.create_session().await {
         Ok(session) => open_session(store, view, app, session.id).await,
-        Err(err) => tracing::warn!(%err, "failed to create session"),
+        Err(err) => {
+            tracing::warn!(%err, "failed to create session");
+            app.last_error = Some(format!("create session failed: {err}"));
+        }
     }
 }
 
@@ -245,11 +261,15 @@ async fn open_session(store: &mut Store, view: &View<'_>, app: &mut App, id: Str
             store.open_session(id.clone(), messages);
             app.route = Route::Session(id.clone());
             app.scroll = 0;
+            app.last_error = None;
             if let Some(index) = store.sessions.iter().position(|session| session.id == id) {
                 app.selected = index;
             }
         }
-        Err(err) => tracing::warn!(%err, "failed to load transcript"),
+        Err(err) => {
+            tracing::warn!(%err, "failed to load transcript");
+            app.last_error = Some(format!("load transcript failed: {err}"));
+        }
     }
 }
 
@@ -266,8 +286,12 @@ async fn submit_prompt(view: &View<'_>, app: &mut App) {
         Ok(()) => {
             app.prompt.take();
             app.scroll = u16::MAX;
+            app.last_error = None;
         }
-        Err(err) => tracing::warn!(%err, "failed to send prompt"),
+        Err(err) => {
+            tracing::warn!(%err, "failed to send prompt");
+            app.last_error = Some(format!("send prompt failed: {err}"));
+        }
     }
 }
 
@@ -284,9 +308,15 @@ fn edit_prompt(key: KeyEvent, app: &mut App) {
     }
 }
 
-/// Draw one frame and return the number of transcript content lines, so the
-/// scroll offset can be clamped.
-fn draw(frame: &mut Frame, store: &Store, view: &View<'_>, app: &App) -> usize {
+/// Draw one frame and return the transcript row count plus the viewport height,
+/// so the scroll offset can be clamped to the real end.
+/// The largest scroll offset that still shows content: the last row that fills
+/// the viewport. Keeps `scroll = u16::MAX` (scroll to bottom) on the real end.
+fn last_scroll(total: usize, height: usize) -> u16 {
+    total.saturating_sub(height.max(1)).min(u16::MAX as usize) as u16
+}
+
+fn draw(frame: &mut Frame, store: &Store, view: &View<'_>, app: &App) -> (usize, usize) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -316,15 +346,18 @@ fn draw(frame: &mut Frame, store: &Store, view: &View<'_>, app: &App) -> usize {
     }
 
     let leader = if app.leader_pending { " LEADER " } else { "" };
-    let status = format!(
-        " {} | {} | {:?}{leader} ",
-        view.theme.name, view.location, store.status
-    );
+    let status = match &app.last_error {
+        Some(error) => format!(" {error} | esc to dismiss{leader} "),
+        None => format!(
+            " {} | {} | {:?}{leader} ",
+            view.theme.name, view.location, store.status
+        ),
+    };
     frame.render_widget(
         Paragraph::new(status).block(Block::default().borders(Borders::TOP)),
         chunks[1],
     );
-    total
+    (total, chunks[0].height as usize)
 }
 
 #[cfg(test)]
@@ -334,6 +367,15 @@ mod tests {
 
     use super::*;
     use crate::context::event::Event;
+
+    #[test]
+    fn last_scroll_keeps_the_viewport_filled() {
+        assert_eq!(last_scroll(0, 10), 0);
+        assert_eq!(last_scroll(10, 10), 0);
+        assert_eq!(last_scroll(11, 10), 1);
+        assert_eq!(last_scroll(25, 10), 15);
+        assert_eq!(last_scroll(5, 0), 4);
+    }
 
     /// One SSE response carrying a single `server.connected` frame, then close.
     fn serve_connected(listener: &TcpListener) {

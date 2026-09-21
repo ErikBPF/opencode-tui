@@ -273,5 +273,21 @@ disable and unknown keys reported.
 - **Deps:** S4, S6b. **Rollback:** revert to the three-command set; the palette
   is additive.
 
+### S8b — Viewport correctness and surfaced failures
+
+- **Observable:** opening a session or sending a prompt leaves the transcript at
+  its true bottom, so the streamed reply and the `> prompt` line are visible; a
+  failed action is shown in the footer instead of only logged.
+- **GREEN:** `routes::session::render` returns the *wrapped* row count
+  (`wrapped_height(line_width, width)`) instead of the source-line count, and
+  `app::draw` returns `(total_rows, viewport_height)` so `app::last_scroll`
+  clamps `messages_last` / post-send scrolling to the real bottom. `App` gains
+  `last_error`, set by the failing helpers and rendered in the footer; any key
+  clears it.
+- **Checks:** unit tests `wrapped_height_counts_rows_and_never_zero` and
+  `last_scroll_keeps_the_viewport_filled`; contract gate stays green.
+- **Deps:** S8. **Rollback:** revert the render return to the line count and drop
+  the footer error branch.
+
 Frontier Q1–Q4 remain open with defaults in use: devenv +
 justfile only; single crate; no permission answering in M1; GitHub Actions CI.
