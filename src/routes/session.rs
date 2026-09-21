@@ -1,14 +1,18 @@
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Text};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::context::sdk::{MessageWithParts, Permission, Session};
 
+/// Placeholder shown while the prompt buffer is empty, mirroring upstream's
+/// `Ask anything…` hint.
+const PROMPT_PLACEHOLDER: &str = "Ask anything…";
+
 /// Session screen. Mirrors upstream `routes/session/index.tsx`: the loaded
-/// transcript, grouped by message and rendered by part type, plus a read-only
-/// permission banner when the server is waiting for an answer.
+/// transcript in a bordered pane, a read-only permission banner, and a prompt
+/// input box at the bottom.
 ///
 /// Returns the total number of *wrapped* rows so the caller can clamp its scroll
 /// offset; `scroll` is the top row to display.
@@ -24,6 +28,19 @@ pub fn render(
     let title = session
         .map(|session| session.title.clone().unwrap_or_else(|| session.id.clone()))
         .unwrap_or_else(|| "Session".to_string());
+
+    // The transcript and the prompt box are separate panes so the input is
+    // always visible with its own border and placeholder, as upstream does.
+    let prompt_height = 3u16;
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Min(3),
+            ratatui::layout::Constraint::Length(prompt_height),
+        ])
+        .split(area);
+    let transcript_area = chunks[0];
+    let prompt_area = chunks[1];
 
     let mut lines: Vec<Line> = Vec::new();
     if let Some(permission) = permission {
@@ -49,25 +66,44 @@ pub fn render(
     if lines.is_empty() {
         lines.push(Line::from("No messages yet."));
     }
-    // The prompt line is always present so an empty session still shows where to
-    // type; it is the last row and the caller bottom-anchors the viewport on it.
-    lines.push(Line::from(""));
-    lines.push(Line::from(format!("> {prompt}")));
 
     // Wrapped rows, not source lines: a long text part occupies several rows,
     // and the caller needs the real height to clamp and bottom-anchor scroll.
-    let width = area.width.saturating_sub(2).max(1) as usize;
+    let width = transcript_area.width.saturating_sub(2).max(1) as usize;
     let rows: usize = lines
         .iter()
         .map(|line| wrapped_height(line.width(), width))
         .sum();
 
-    let paragraph = Paragraph::new(Text::from(lines))
+    let transcript = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(title))
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
-    frame.render_widget(paragraph, area);
+    frame.render_widget(transcript, transcript_area);
+
+    render_prompt(frame, prompt_area, prompt);
+
     rows
+}
+
+/// The prompt input box: a bordered pane that always shows where to type and
+/// displays a muted placeholder while the buffer is empty.
+fn render_prompt(frame: &mut Frame, area: Rect, prompt: &str) {
+    let body = if prompt.is_empty() {
+        Line::from(Span::styled(
+            PROMPT_PLACEHOLDER,
+            Style::default().fg(Color::DarkGray),
+        ))
+    } else {
+        Line::from(format!("> {prompt}"))
+    };
+    let widget = Paragraph::new(Text::from(body)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Prompt")
+            .title_bottom(" enter to send "),
+    );
+    frame.render_widget(widget, area);
 }
 
 /// Rows a line of `line_width` cell-widths occupies when wrapped at `width`.

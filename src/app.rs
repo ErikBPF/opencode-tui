@@ -129,33 +129,53 @@ async fn draw_loop(
     view: &View<'_>,
     app: &mut App,
 ) -> Result<()> {
+    // Redraw only when something changed: a key, a stream event, or a resize.
+    // Redrawing every tick re-laid-out the whole transcript and burned CPU for
+    // no visible change, which made a large session feel slow.
+    let mut dirty = true;
     loop {
-        // The transcript row count comes back through a cell so the scroll
-        // clamp sees it without threading a return value through the frame.
-        let total = std::cell::Cell::new(0usize);
-        let height = std::cell::Cell::new(0usize);
-        terminal.draw(|frame| {
-            let (rows, viewport) = draw(frame, store, view, app);
-            total.set(rows);
-            height.set(viewport);
-        })?;
-        // Clamp to the last row that still fills the viewport, so
-        // `scroll = u16::MAX` (scroll to bottom) lands on the real end.
-        let last_top = last_scroll(total.get(), height.get());
-        app.scroll = app.scroll.min(last_top);
+        if dirty {
+            // The transcript row count comes back through a cell so the scroll
+            // clamp sees it without threading a return value through the frame.
+            let total = std::cell::Cell::new(0usize);
+            let height = std::cell::Cell::new(0usize);
+            terminal.draw(|frame| {
+                let (rows, viewport) = draw(frame, store, view, app);
+                total.set(rows);
+                height.set(viewport);
+            })?;
+            // Clamp to the last row that still fills the viewport, so
+            // `scroll = u16::MAX` (scroll to bottom) lands on the real end.
+            let last_top = last_scroll(total.get(), height.get());
+            app.scroll = app.scroll.min(last_top);
+            dirty = false;
+        }
 
         while let Ok(message) = receiver.try_recv() {
             match message {
                 Ok(envelope) => store.apply(&envelope),
                 Err(_) => store.degraded(),
             }
+            dirty = true;
         }
 
-        if event::poll(Duration::from_millis(100))? {
-            if let TerminalEvent::Key(key) = event::read()? {
-                if dispatch(key, store, view, app).await {
-                    return Ok(());
+        // A short poll keeps keys and stream events responsive; when idle we
+        // block until the next event instead of spinning.
+        let poll = if dirty {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_millis(100)
+        };
+        if event::poll(poll)? {
+            match event::read()? {
+                TerminalEvent::Key(key) => {
+                    if dispatch(key, store, view, app).await {
+                        return Ok(());
+                    }
+                    dirty = true;
                 }
+                TerminalEvent::Resize(_, _) => dirty = true,
+                _ => {}
             }
         }
     }
@@ -375,6 +395,37 @@ mod tests {
         assert_eq!(last_scroll(11, 10), 1);
         assert_eq!(last_scroll(25, 10), 15);
         assert_eq!(last_scroll(5, 0), 4);
+    }
+
+    #[test]
+    fn typing_edits_the_prompt_only_inside_a_session() {
+        let mut app = App::default();
+        // On the home screen printable keys are not prompt text.
+        edit_prompt(
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+            &mut app,
+        );
+        assert!(app.prompt.is_empty());
+
+        app.route = Route::Session("ses".to_string());
+        for character in ['h', 'i'] {
+            edit_prompt(
+                KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE),
+                &mut app,
+            );
+        }
+        assert_eq!(app.prompt.text(), "hi");
+        edit_prompt(
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            &mut app,
+        );
+        assert_eq!(app.prompt.text(), "h");
+        // A control chord is not text.
+        edit_prompt(
+            KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL),
+            &mut app,
+        );
+        assert_eq!(app.prompt.text(), "h");
     }
 
     /// One SSE response carrying a single `server.connected` frame, then close.

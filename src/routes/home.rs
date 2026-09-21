@@ -17,7 +17,12 @@ pub fn render(frame: &mut Frame, area: Rect, store: &Store, selected: usize) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Sessions"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Sessions")
+                .title_bottom(" enter open · ctrl+x n new · ctrl+p commands "),
+        )
         .highlight_symbol("> ");
 
     let mut state = ListState::default();
