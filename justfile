@@ -67,8 +67,13 @@ contracts: features
 contracts-live: features
     OPENCODE_TUI_CONTRACT_LIVE=1 {{cargo}} test --test contract
 
-ci: format-check lint test features contracts
-    @echo "CI GREEN (fmt + clippy + tests + features + contracts)"
+# The homelab CI-notification contract pins this workflow's webhook and
+# Cleytin mention. Keep it green locally, not only in CI.
+notify-contract:
+    bash tests/ci-notification-contract.sh
+
+ci: format-check lint test features contracts notify-contract
+    @echo "CI GREEN (fmt + clippy + tests + features + contracts + notify)"
 
 # Attach to a running server. URL defaults to the local server. Uses the
 # release build: the TUI must redraw smoothly, and an unoptimized build is

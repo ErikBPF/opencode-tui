@@ -15,12 +15,15 @@ First milestone (M1) tracer bullet: **attach + read + prompt**.
 - [x] Connect to a server, load the session list, hold `/global/event`,
       render the home screen.
 - [x] Session transcript with part renderers.
-- [x] Prompt submission.
+- [x] Prompt submission, start screen, native `/` slash commands and server
+      commands, session creation.
 - [x] Permission requests rendered read-only.
+- [x] Continuous integration (`just ci` on GitHub Actions) and a Nix package
+      with a home-manager module.
 
 The behavior contract is
 [`features/attach-and-prompt.feature`](features/attach-and-prompt.feature). The
-eight offline scenarios run through cucumber-rs against a pinned
+ten offline scenarios run through cucumber-rs against a pinned
 `opencode serve` (`just contracts`). The prompt reply needs a model provider, so
 that scenario is tagged `@live` and runs only under `just contracts-live`.
 
@@ -90,7 +93,7 @@ Everything runs inside the declared environment:
 
 ```sh
 devenv shell
-just ci          # fmt --check + clippy -D warnings + test + feature contracts
+just ci          # fmt --check + clippy -D warnings + test + feature contracts + notify contract
 just run
 ```
 
@@ -99,6 +102,38 @@ just run
 `3104c1428ec91f809e5ab86631300de41eb6952e`) into the gitignored
 `reference/opencode` as a sparse checkout. It is read for interface fidelity
 only and is never a build dependency.
+
+`just ci` runs the `notify-contract` recipe too: it asserts the CI workflow
+still carries the Discord webhook, the Cleytin mention and the
+`allowed_mentions` shape the homelab `ci-notification-contract.sh` requires.
+
+### Packaging
+
+The flake builds the binary and exposes a home-manager module:
+
+```sh
+nix build .#default
+nix run .#default -- --url http://127.0.0.1:4096
+```
+
+```nix
+programs.opencode-tui = {
+  enable = true;
+  url = "http://127.0.0.1:4096";   # exported as OPENCODE_URL
+};
+```
+
+The module installs the binary and sets `OPENCODE_URL`; it attaches to a
+server that is already running and never starts or manages one. The flake is
+consumed by `desktop-nixos` as a `github:ErikBPF/opencode-tui` input; it is not
+published to FlakeHub.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs `just ci` on pushes to `main` and on pull
+requests, and pings the Cleytin CI webhook when the gate fails.
+`.github/workflows/security.yml` runs gitleaks and pings the security webhook
+when it finds a committed secret.
 
 ## Fidelity
 

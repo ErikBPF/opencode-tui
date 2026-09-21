@@ -320,5 +320,32 @@ disable and unknown keys reported.
 - **Deps:** S8, S8b. **Rollback:** drop `SessionList` and the start-screen
   branch; revert `send_prompt`/`send_command` to awaited calls.
 
-Frontier Q1–Q4 remain open with defaults in use: devenv +
-justfile only; single crate; no permission answering in M1; GitHub Actions CI.
+### S8d — Continuous integration and a Nix package (Q4, Q1)
+
+- **Observable:** pushing to `main` runs the whole `just ci` gate on GitHub
+  Actions, a failing run pings the Cleytin CI webhook, and a secret-scanning
+  workflow pings the security webhook; `nix build .#default` yields a runnable
+  `opencode-tui`, and a home-manager module installs it with `OPENCODE_URL`.
+- **Scenarios:** the gate, the two notification shapes and the Nix build are
+  asserted by `tests/ci-notification-contract.sh`, the homelab
+  `ci-notification-contract.sh` / `security-notification-contract.sh`, and
+  `nix build` itself. No new `.feature` scenario: the behavior is CI wiring,
+  not client behavior.
+- **GREEN:** `.github/workflows/ci.yml` (checkout pinned, rustup 1.89.0 with
+  rustfmt+clippy, apt `just`, `just ci`, `notify-ci` on failure);
+  `.github/workflows/security.yml` (gitleaks 8.24.3 with SHA256 verify,
+  `--redact --no-banner`, notify on failure); `tests/ci-notification-contract.sh`
+  mirrored as a `notify-contract` recipe inside `just ci`; `flake.nix`
+  (flake-parts, `packages.default`/`opencode-tui`, `apps.default`,
+  `formatter = alejandra`, dev shell) with `nix/package.nix`
+  (`rustPlatform.buildRustPackage`, `cargoLock.lockFile = ../Cargo.lock`,
+  `doCheck = false` because the contract test needs a live server) and
+  `nix/home-manager.nix` (`programs.opencode-tui.{enable,package,url}`, sets
+  `OPENCODE_URL`, never starts a server).
+- **Deps:** S8c. **Rollback:** delete the workflows and `nix/`; the flake does
+  not publish to FlakeHub, so nothing downstream is broken by removing it.
+
+Frontier Q1–Q4 are now closed: Q4 wired (`ci.yml` + `security.yml` +
+`notify-contract`), Q1 packaged (`flake.nix` + `nix/home-manager.nix`, consumed
+by `desktop-nixos` as a github input); Q2 (single crate) and Q3 (no permission
+answering in M1) keep their defaults.

@@ -1,0 +1,52 @@
+# Secret scan. The homelab security-notification contract requires the
+# webhook name, the Cleytin mention and the allowed_mentions shape below.
+name: security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Gitleaks
+        env:
+          GITLEAKS_VERSION: "8.24.3"
+          GITLEAKS_SHA256: "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/gitleaks.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          sudo install "$RUNNER_TEMP/gitleaks" /usr/local/bin/gitleaks
+
+      - name: Scan committed secrets
+        id: gitleaks
+        run: gitleaks git --redact --no-banner .
+
+      - name: Notify security channel
+        if: always() && steps.gitleaks.outcome == 'failure'
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_SECURITY_WEBHOOK }}
+          CLEYTIN_USER_ID: "1532710143517659356"
+        run: |
+          if [[ -z "$WEBHOOK" ]]; then echo "::notice::DISCORD_SECURITY_WEBHOOK not configured"; exit 0; fi
+          jq -nc --arg cleytin "$CLEYTIN_USER_ID" --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{content:("<@"+$cleytin+">") ,allowed_mentions:{users:[$cleytin]},embeds:[{title:"SECRET SCAN FAILED",description:("**Repository:** `"+$repo+"`\n**Ref:** `"+$ref+"`\nFindings withheld from Discord.\n[Open workflow]("+$url+")"),color:15548997}]}' |
+            curl -fsS -H "Content-Type: application/json" --data @- "$WEBHOOK"

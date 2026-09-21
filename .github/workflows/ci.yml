@@ -1,0 +1,52 @@
+# The gate is the local `just ci` recipe (fmt --check, clippy -D warnings,
+# unit tests, feature-file shape, cucumber contract). Static checks only: no
+# secrets, deploy credentials, or untrusted event inputs in run: steps.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal --component rustfmt,clippy
+          rustup default 1.89.0
+          cargo --version
+
+      - name: Install contract-test runner
+        run: sudo apt-get update && sudo apt-get install -y just
+
+      - name: Gate
+        run: just ci
+
+  notify-ci:
+    needs: ci
+    if: ${{ always() && needs.ci.result == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify CI channel
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_CI_WEBHOOK }}
+          CLEYTIN_USER_ID: "1532710143517659356"
+        run: |
+          if [[ -z "$WEBHOOK" ]]; then echo "::notice::DISCORD_CI_WEBHOOK not configured"; exit 0; fi
+          jq -nc --arg cleytin "$CLEYTIN_USER_ID" --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg actor "$GITHUB_ACTOR" --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{content:("<@"+$cleytin+">") ,allowed_mentions:{users:[$cleytin]},embeds:[{title:"CI FAILED",description:("**Repository:** `"+$repo+"`\n**Ref:** `"+$ref+"`\n**Actor:** `"+$actor+"`\n[Open workflow]("+$url+")"),color:15548997}]}' |
+            curl -fsS -H "Content-Type: application/json" --data @- "$WEBHOOK"
