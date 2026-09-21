@@ -8,20 +8,24 @@ reference_dir := "reference/opencode"
 reference_repo := "https://github.com/anomalyco/opencode"
 reference_tag := "v1.18.30"
 
+# Use the ambient cargo when the devenv shell is active, otherwise enter it, so
+# `just x` works the same from inside or outside the shell.
+cargo := if `command -v cargo 2>/dev/null || true` != "" { "cargo" } else { "devenv shell -- cargo" }
+
 check:
-    cargo check --all-targets
+    {{cargo}} check --all-targets
 
 test:
-    cargo test
+    {{cargo}} test
 
 fmt:
-    cargo fmt
+    {{cargo}} fmt
 
 format-check:
-    cargo fmt -- --check
+    {{cargo}} fmt -- --check
 
 clippy:
-    cargo clippy --all-targets -- -D warnings
+    {{cargo}} clippy --all-targets -- -D warnings
 
 lint: clippy
 
@@ -57,11 +61,11 @@ features:
 # Binding for features/attach-and-prompt.feature: the offline scenarios run
 # through cucumber-rs against a pinned `opencode serve`.
 contracts: features
-    cargo test --test contract
+    {{cargo}} test --test contract
 
 # The @live scenarios additionally need a reachable model provider.
 contracts-live: features
-    OPENCODE_TUI_CONTRACT_LIVE=1 cargo test --test contract
+    OPENCODE_TUI_CONTRACT_LIVE=1 {{cargo}} test --test contract
 
 ci: format-check lint test features contracts
     @echo "CI GREEN (fmt + clippy + tests + features + contracts)"
@@ -75,8 +79,8 @@ run: release
 
 # Build the optimized binary.
 release:
-    cargo build --release
+    {{cargo}} build --release
 
 # Run the opt-in live tests against a running server.
 live server="http://127.0.0.1:4096":
-    OPENCODE_TUI_LIVE_URL={{server}} cargo test -- --ignored
+    OPENCODE_TUI_LIVE_URL={{server}} {{cargo}} test -- --ignored
